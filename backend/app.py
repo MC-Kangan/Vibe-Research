@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,7 @@ import chat as chat_layer
 import cli_runtime
 import debate as debate_layer
 import gstock
+import market_data
 import newsradar
 import portfolio as pf
 import market
@@ -68,6 +70,17 @@ def _validate(code: str) -> str:
     if not code.isdigit() or len(code) != 6:
         raise HTTPException(400, "代码必须是 6 位数字")
     return code
+
+
+def _validate_stock_symbol(symbol: str) -> str:
+    """Return the canonical A-share, US, or explicit European symbol."""
+    value = (symbol or "").strip().upper()
+    if value.isdigit() and len(value) == 6:
+        return value
+    try:
+        return market_data.resolve_symbol(value).provider_symbol
+    except market_data.UnsupportedSymbolError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/health")
@@ -162,7 +175,7 @@ def debate(req: DebateReq):
 
     刻意不产出买卖结论——终点是「分歧点 + 验证清单」，判断留给用户自己。
     """
-    code = _validate(req.code)
+    code = _validate_stock_symbol(req.code)
     cfg = _check_llm(req.llm)
     rounds = 2 if req.rounds >= 2 else 1
     return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds))
@@ -201,9 +214,7 @@ def portfolio_get():
 @app.post("/api/portfolio/holding")
 def portfolio_add(h: HoldingIn):
     """加一笔持仓（同代码按加权平均成本合并）。存本地，不上传。"""
-    code = (h.code or "").strip()
-    if not code.isdigit() or len(code) != 6:
-        raise HTTPException(400, "代码必须是 6 位数字")
+    code = _validate_stock_symbol(h.code)
     if h.shares <= 0:
         raise HTTPException(400, "数量必须大于 0")
     # 成本价不限正负：融券 / 返息 / 摊薄后为负成本等情形按结果计算，用户想怎么输就怎么输。
@@ -212,7 +223,7 @@ def portfolio_add(h: HoldingIn):
 
 @app.delete("/api/portfolio/holding")
 def portfolio_remove(code: str = Query(...)):
-    return {"data": pf.remove_holding(code.strip())}
+    return {"data": pf.remove_holding(_validate_stock_symbol(code))}
 
 
 # ---- 我的研报（用户上传自己的研报，存本地、不上传、不进开源仓库）----
@@ -262,9 +273,7 @@ class CloseIn(BaseModel):
 @app.post("/api/portfolio/close")
 def portfolio_close(c: CloseIn):
     """记一笔已清仓（已实现盈亏）。存本地。"""
-    code = (c.code or "").strip()
-    if not code.isdigit() or len(code) != 6:
-        raise HTTPException(400, "代码必须是 6 位数字")
+    code = _validate_stock_symbol(c.code)
     if c.price <= 0 or c.shares <= 0:
         raise HTTPException(400, "清仓价与股数必须大于 0")
     # 买入成本不限正负（同持仓录入）：按 (清仓价 - 成本) × 股数 的结果计算已实现盈亏。
@@ -379,6 +388,39 @@ def global_hk_cashflow(symbol: str = Query(..., min_length=1, max_length=16)):
         raise HTTPException(502, f"港股现金流查询异常：{e}") from e
 
 
+def _market_data_http_error(exc: market_data.MarketDataError) -> HTTPException:
+    """Map provider-neutral errors without leaking upstream request details."""
+    if isinstance(exc, market_data.UnsupportedSymbolError):
+        return HTTPException(400, str(exc))
+    if isinstance(exc, market_data.InstrumentNotFoundError):
+        return HTTPException(404, str(exc))
+    if isinstance(exc, market_data.ProviderTimeoutError):
+        return HTTPException(504, str(exc))
+    return HTTPException(502, str(exc))
+
+
+@app.get("/api/market-data/snapshot")
+def market_data_snapshot(symbol: str = Query(..., min_length=1, max_length=24)):
+    """美股或欧洲原生上市股票快照；欧洲要求显式交易所后缀。"""
+    try:
+        return {"data": market_data.get_snapshot(symbol)}
+    except market_data.MarketDataError as exc:
+        raise _market_data_http_error(exc) from exc
+
+
+@app.get("/api/market-data/bars")
+def market_data_bars(
+    symbol: str = Query(..., min_length=1, max_length=24),
+    range_: str = Query("1y", alias="range"),
+    interval: str = Query("1d"),
+):
+    """美股/欧洲股票日线 OHLCV；价格已归一为交易币种主单位。"""
+    try:
+        return {"data": market_data.get_bars(symbol, range_, interval)}
+    except market_data.MarketDataError as exc:
+        raise _market_data_http_error(exc) from exc
+
+
 @app.get("/api/indices")
 def indices():
     """A股大盘指数实时行情（上证/深证成指/创业板指/沪深300）。仅标准库。"""
@@ -398,6 +440,54 @@ def quote(codes: str = Query(..., description="逗号分隔的 6 位代码")):
         return {"data": astock.tencent_quote(lst)}
     except Exception as e:  # noqa: BLE001 — 边界统一兜底
         raise HTTPException(502, f"行情源异常：{e}") from e
+
+
+@app.get("/api/quotes")
+def universal_quotes(symbols: str = Query(..., min_length=1, max_length=1000)):
+    """A 股、美股和欧洲股票的批量行情；单个上游失败不会拖垮整批。"""
+    raw = [item.strip() for item in symbols.split(",") if item.strip()]
+    if not raw or len(raw) > 50:
+        raise HTTPException(400, "symbols 必须包含 1-50 个逗号分隔的股票代码")
+    canonical = list(dict.fromkeys(_validate_stock_symbol(item) for item in raw))
+    a_codes = [item for item in canonical if item.isdigit() and len(item) == 6]
+    market_symbols = [item for item in canonical if item not in a_codes]
+    result: dict[str, dict] = {}
+
+    if a_codes:
+        try:
+            for code, quote_data in astock.tencent_quote(a_codes).items():
+                result[code] = {**quote_data, "currency": "CNY", "source": "tencent", "market": "CN"}
+        except Exception:
+            pass
+
+    def fetch_market(symbol: str):
+        return symbol, market_data.get_snapshot(symbol)
+
+    with ThreadPoolExecutor(max_workers=min(8, len(market_symbols) or 1)) as executor:
+        futures = [executor.submit(fetch_market, symbol) for symbol in market_symbols]
+        for future in as_completed(futures):
+            try:
+                symbol, snapshot = future.result()
+            except market_data.MarketDataError:
+                continue
+            quote_data = snapshot.quote
+            instrument = snapshot.instrument
+            result[symbol] = {
+                "name": instrument.name,
+                "price": quote_data.price,
+                "last_close": quote_data.previous_close,
+                "change_pct": quote_data.change_pct,
+                "pe_ttm": None,
+                "pb": None,
+                "mcap_yi": None,
+                "turnover_pct": None,
+                "limit_up": None,
+                "limit_down": None,
+                "currency": quote_data.currency,
+                "source": quote_data.source,
+                "market": "US" if instrument.country == "US" else "EU",
+            }
+    return {"data": result}
 
 
 import time as _time

@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import chat
 import cli_runtime
+import market_data
 import tools
 
 # 底稿抓取清单：覆盖「估值 / 财报 / 资金 / 事件 / 行业」五个面，与 chat.ANALYSIS_FRAMEWORK 对齐。
@@ -49,6 +50,29 @@ _DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
     ("query_reports", {}, "近期研报", True, True),
     ("query_news", {}, "近期新闻", True, True),
 ]
+
+_MARKET_DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
+    ("query_market_snapshot", {}, "Yahoo 行情快照", True, False),
+    ("query_market_bars", {"range": "1y"}, "近一年日线价格与成交量", True, False),
+]
+_US_FUNDAMENTAL_SPEC = ("query_global_stock", {}, "关键财务指标（现有海外源）", True, False)
+
+
+def _dossier_spec(symbol: str) -> list[tuple[str, dict, str, bool, bool]]:
+    if symbol.isdigit() and len(symbol) == 6:
+        return _DOSSIER_SPEC
+    resolved = market_data.resolve_symbol(symbol)
+    return [*_MARKET_DOSSIER_SPEC, _US_FUNDAMENTAL_SPEC] if resolved.exchange.country == "US" else list(_MARKET_DOSSIER_SPEC)
+
+
+def _known_market_gaps(symbol: str) -> list[str]:
+    if symbol.isdigit() and len(symbol) == 6:
+        return []
+    resolved = market_data.resolve_symbol(symbol)
+    common = ["公司公告/监管文件（数据源未接入）", "个股新闻（数据源未接入）", "分析师一致预期（数据源未接入）"]
+    if resolved.exchange.country != "US":
+        common.insert(0, "财务与估值指标（欧洲数据源未接入）")
+    return common
 
 _SECTION_CAP = 1800  # 单个小节注入上限，防止某项数据把整份底稿撑爆
 _PARALLEL_WORKERS = 4
@@ -95,7 +119,12 @@ def _payload_empty(value) -> bool:
 def _fetch_section(spec: tuple[str, dict, str, bool, bool], code: str) -> dict:
     """跑一项底稿数据，返回 {title, tool, data, ok}。"""
     name, extra, title, _par, empty_ok = spec
-    args = {"codes": [code]} if name == "query_quote" else {"code": code, **extra}
+    if name == "query_quote":
+        args = {"codes": [code]}
+    elif name in {"query_market_snapshot", "query_market_bars", "query_global_stock"}:
+        args = {"symbol": code, **extra}
+    else:
+        args = {"code": code, **extra}
     result = tools.exec_tool(name, args)
 
     if isinstance(result, dict) and result.get("error"):
@@ -115,10 +144,11 @@ def collect_dossier(code: str):
     调用方用 `dossier = yield from collect_dossier(code)` 即可边推进度边拿结果——
     13 项串行要一分多钟，没有进度反馈的话前端就是一分钟白屏。
     """
+    spec_list = _dossier_spec(code)
     done: dict[str, dict] = {}
-    total = len(_DOSSIER_SPEC)
-    par = [s for s in _DOSSIER_SPEC if s[3]]
-    seq = [s for s in _DOSSIER_SPEC if not s[3]]
+    total = len(spec_list)
+    par = [s for s in spec_list if s[3]]
+    seq = [s for s in spec_list if not s[3]]
 
     with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as ex:
         futures = {ex.submit(_fetch_section, s, code): s for s in par}
@@ -141,8 +171,8 @@ def collect_dossier(code: str):
         yield {"type": "dossier_progress", "title": sec["title"], "ok": sec["ok"],
                "loaded": len(done), "total": total}
 
-    sections, missing = [], []
-    for _n, _e, title, _p, _ok in _DOSSIER_SPEC:  # 按清单顺序还原，保证底稿可读性稳定
+    sections, missing = [], _known_market_gaps(code)
+    for _n, _e, title, _p, _ok in spec_list:  # 按清单顺序还原，保证底稿可读性稳定
         sec = done.get(title)
         if sec and sec["ok"]:
             sections.append({"title": sec["title"], "tool": sec["tool"], "data": sec["data"]})

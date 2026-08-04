@@ -1,6 +1,7 @@
 """API 验证/契约测（FastAPI TestClient）。大多在校验层就返回，不联网、可靠。"""
 import pytest
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
 import app as app_module
 
@@ -66,3 +67,68 @@ def test_gstock_quote_full_null_shape():
     q = gstock._quote_from({})
     assert set(q) == {"code", "name", "price", "open", "high", "low", "prev_close", "amount", "mcap", "change_pct"}
     assert all(v is None for v in q.values())
+
+
+def test_market_data_snapshot_envelope(monkeypatch):
+    monkeypatch.setattr(app_module.market_data, "get_snapshot", lambda symbol: {"symbol": symbol})
+    response = client.get("/api/market-data/snapshot?symbol=VOD.L")
+    assert response.status_code == 200
+    assert response.json() == {"data": {"symbol": "VOD.L"}}
+
+
+def test_market_data_bars_envelope(monkeypatch):
+    monkeypatch.setattr(
+        app_module.market_data,
+        "get_bars",
+        lambda symbol, range_, interval: {"symbol": symbol, "range": range_, "interval": interval},
+    )
+    response = client.get("/api/market-data/bars?symbol=SAP.DE&range=6mo&interval=1d")
+    assert response.status_code == 200
+    assert response.json()["data"] == {"symbol": "SAP.DE", "range": "6mo", "interval": "1d"}
+
+
+def test_universal_quotes_combines_a_share_and_us(monkeypatch):
+    monkeypatch.setattr(app_module.astock, "tencent_quote", lambda codes: {
+        code: {"name": "贵州茅台", "price": 100.0, "change_pct": 1.0} for code in codes
+    })
+    snapshot = SimpleNamespace(
+        instrument=SimpleNamespace(name="Apple Inc.", country="US"),
+        quote=SimpleNamespace(price=200.0, previous_close=198.0, change_pct=1.01, currency="USD", source="yahoo"),
+    )
+    monkeypatch.setattr(app_module.market_data, "get_snapshot", lambda symbol: snapshot)
+    response = client.get("/api/quotes?symbols=600519,AAPL")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["600519"]["currency"] == "CNY"
+    assert data["AAPL"]["name"] == "Apple Inc."
+    assert data["AAPL"]["currency"] == "USD"
+
+
+def test_universal_quotes_rejects_bad_symbol():
+    assert client.get("/api/quotes?symbols=BAD%20SYMBOL").status_code == 400
+
+
+@pytest.mark.parametrize("error,status", [
+    (app_module.market_data.UnsupportedSymbolError("bad symbol"), 400),
+    (app_module.market_data.InstrumentNotFoundError("not found"), 404),
+    (app_module.market_data.ProviderError("upstream failed"), 502),
+    (app_module.market_data.ProviderTimeoutError("upstream timed out"), 504),
+])
+def test_market_data_error_mapping(monkeypatch, error, status):
+    def fail(_symbol):
+        raise error
+
+    monkeypatch.setattr(app_module.market_data, "get_snapshot", fail)
+    response = client.get("/api/market-data/snapshot?symbol=VOD.L")
+    assert response.status_code == status
+    assert response.json()["detail"] == str(error)
+
+
+def test_market_data_routes_use_existing_api_key_middleware(monkeypatch):
+    monkeypatch.setattr(app_module, "_API_KEY", "test-secret")
+    monkeypatch.setattr(app_module.market_data, "get_snapshot", lambda symbol: {"symbol": symbol})
+    assert client.get("/api/market-data/snapshot?symbol=VOD.L").status_code == 401
+    assert client.get(
+        "/api/market-data/snapshot?symbol=VOD.L",
+        headers={"Authorization": "Bearer test-secret"},
+    ).status_code == 200

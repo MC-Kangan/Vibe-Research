@@ -13,9 +13,12 @@ chat.py / mcp_server.py / debate.py 共用本模块，新增工具只需改这�
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import astock
 import gstock
 import market
+import market_data
 import newsradar
 
 # ——— schema 简写：让 20+ 个工具定义保持一屏可读 ———
@@ -105,6 +108,15 @@ TOOLS: list[dict] = [
     _t("query_global_stock",
        "查美股 / 港股 / 韩股个股：行情 + 关键财务指标（韩股仅行情）。美股用字母代码(AAPL)，港股用数字(00700)，韩股 6 位数字加 .KS(005930.KS)。",
        {"symbol": {"type": "string", "description": "美股字母代码 / 港股代码 / 韩股 XXXXXX.KS"}},
+       ["symbol"]),
+    _t("query_market_snapshot",
+       "查美股或欧洲股票的 Yahoo 行情快照。美股用 AAPL；欧洲需交易所后缀，如 VOD.L、SAP.DE。",
+       {"symbol": {"type": "string", "description": "美股或带交易所后缀的欧洲代码"}},
+       ["symbol"]),
+    _t("query_market_bars",
+       "查美股或欧洲股票的 Yahoo 日线 OHLCV 历史，用于观察价格趋势、区间和成交量。",
+       {"symbol": {"type": "string", "description": "美股或带交易所后缀的欧洲代码"},
+        "range": {"type": "string", "enum": ["1mo", "3mo", "6mo", "1y", "2y"], "description": "历史区间，默认 1y"}},
        ["symbol"]),
     _t("query_hk_cashflow",
        "查港股现金流量表：经营/投资/筹资活动现金流净额、现金及等价物净增加、期初/期末现金，多期、附同比。仅港股，代码用数字如 00700。",
@@ -365,6 +377,8 @@ _HANDLERS = {
     "query_market": _market,
     "query_news_radar": _radar,
     "query_global_stock": lambda a: gstock.us_hk_stock(str(a.get("symbol", ""))) or {"error": "未找到该美股/港股/韩股代码"},
+    "query_market_snapshot": lambda a: asdict(market_data.get_snapshot(str(a.get("symbol", "")))),
+    "query_market_bars": lambda a: asdict(market_data.get_bars(str(a.get("symbol", "")), str(a.get("range") or "1y"), "1d")),
     "query_hk_cashflow": lambda a: gstock.hk_cashflow(str(a.get("symbol", ""))) or {"error": "未找到该港股现金流（仅港股支持）"},
 }
 

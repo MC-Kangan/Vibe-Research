@@ -83,9 +83,10 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
 const get = <T>(path: string) => request<T>(path, "GET");
 
 export interface Quote {
-  name: string; price: number; last_close: number; change_pct: number;
-  pe_ttm: number; pb: number; mcap_yi: number; turnover_pct: number;
-  limit_up: number; limit_down: number;
+  name: string; price: number | null; last_close: number | null; change_pct: number | null;
+  pe_ttm: number | null; pb: number | null; mcap_yi: number | null; turnover_pct: number | null;
+  limit_up: number | null; limit_down: number | null;
+  currency?: string; source?: string; market?: "CN" | "US" | "EU";
 }
 
 export interface Valuation {
@@ -176,18 +177,23 @@ export interface RadarData {
 }
 
 export interface Holding {
-  code: string; name: string; price: number; shares: number; cost: number;
-  market_value: number; pnl: number; pnl_pct: number;
+  code: string; name: string; price: number | null; shares: number; cost: number;
+  market_value: number | null; pnl: number | null; pnl_pct: number | null; currency: string;
+  quote_available: boolean;
 }
 export interface ClosedPosition {
   code: string; name: string; date: string; price: number; shares: number; cost: number;
-  pnl: number; pnl_pct: number;
+  pnl: number; pnl_pct: number; currency: string;
 }
+export interface PortfolioTotal { currency?: string; market_value: number; cost: number; pnl: number; pnl_pct: number }
 export interface PortfolioData {
   holdings: Holding[];
-  totals: { market_value: number; cost: number; pnl: number; pnl_pct: number };
+  totals: PortfolioTotal;
+  totals_by_currency: Record<string, PortfolioTotal>;
+  mixed_currency: boolean;
   closed: ClosedPosition[];
   realized_pnl: number;
+  realized_pnl_by_currency: Record<string, number>;
   updated: string; last_refresh: string | null;
 }
 
@@ -243,6 +249,29 @@ export interface HkCashflow {
   currency: string | null; item_order: string[]; periods: HkCashflowPeriod[];
 }
 
+// 美股/欧洲原生上市股票（规范化 Yahoo personal-use 行情契约）
+export interface MarketInstrument {
+  instrument_id: string; asset_type: "equity"; symbol: string; provider_symbol: string;
+  name: string; exchange: string; mic: string; country: string;
+  currency: string; timezone: string | null;
+}
+export interface MarketQuote {
+  price: number | null; open: number | null; high: number | null; low: number | null;
+  previous_close: number | null; change_pct: number | null; currency: string;
+  source_price: number | null; source_price_unit: string; price_scale: number;
+  market_state: string | null; observed_at: string | null; fetched_at: string;
+  delay_seconds: number | null; source: string;
+}
+export interface MarketSnapshot { instrument: MarketInstrument; quote: MarketQuote }
+export interface MarketHistoricalBar {
+  date: string; open: number | null; high: number | null; low: number | null;
+  close: number | null; adjusted_close: number | null; volume: number | null; currency: string;
+}
+export interface MarketHistoricalSeries {
+  provider_symbol: string; range: string; interval: string; source: string;
+  fetched_at: string; bars: MarketHistoricalBar[];
+}
+
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
   indices: () => get<IndexQuote[]>("/indices"),
@@ -252,11 +281,15 @@ export const api = {
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
   hkCashflow: (symbol: string) => get<HkCashflow>(`/global/hk/cashflow?symbol=${encodeURIComponent(symbol)}`),
+  marketSnapshot: (symbol: string) => get<MarketSnapshot>(`/market-data/snapshot?symbol=${encodeURIComponent(symbol)}`),
+  marketBars: (symbol: string, range = "1y", interval = "1d") => get<MarketHistoricalSeries>(
+    `/market-data/bars?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`,
+  ),
   radar: () => get<RadarData>("/radar"),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   portfolio: () => get<PortfolioData>("/portfolio"),
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
-  removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${code}`, "DELETE"),
+  removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${encodeURIComponent(code)}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
@@ -266,6 +299,7 @@ export const api = {
   financials: (code: string) => get<Financials>(`/financials?code=${code}`),
   announcements: (code: string) => get<Announcement[]>(`/announcements?code=${code}`),
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),
+  quotes: (symbols: string) => get<Record<string, Quote>>(`/quotes?symbols=${encodeURIComponent(symbols)}`),
   reports: (code: string) => get<Report[]>(`/reports?code=${code}`),
   news: (code: string) => get<NewsItem[]>(`/news?code=${code}`),
   margin: (code: string) => get<MarginRow[]>(`/margin?code=${code}`),

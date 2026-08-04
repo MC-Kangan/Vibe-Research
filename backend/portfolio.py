@@ -20,6 +20,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 import astock
+import market_data
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _OLD_PF_FILE = os.path.join(HERE, ".cache", "portfolio.json")  # ≤v0.1.1 旧位置
@@ -67,6 +68,28 @@ def _save(d: dict) -> None:
     os.replace(tmp, PF_FILE)
 
 
+def _quote_for_symbol(symbol: str) -> dict:
+    """Normalize one A-share or Yahoo-backed US/European quote for portfolio math."""
+    if symbol.isdigit() and len(symbol) == 6:
+        quote = astock.tencent_quote([symbol]).get(symbol, {})
+        return {"name": quote.get("name", symbol), "price": quote.get("price", 0.0), "currency": "CNY"}
+    snapshot = market_data.get_snapshot(symbol)
+    return {
+        "name": snapshot.instrument.name or symbol,
+        "price": snapshot.quote.price,
+        "currency": snapshot.quote.currency or snapshot.instrument.currency or "UNKNOWN",
+    }
+
+
+def _symbol_currency(symbol: str) -> str:
+    if symbol.isdigit() and len(symbol) == 6:
+        return "CNY"
+    try:
+        return market_data.resolve_symbol(symbol).exchange.expected_currency
+    except market_data.MarketDataError:
+        return "UNKNOWN"
+
+
 def add_holding(code: str, shares: float, cost: float) -> dict:
     """加一笔持仓；同代码则按加权平均成本合并（加仓）。"""
     with _LOCK:
@@ -99,11 +122,11 @@ def close_position(code: str, date: str, price: float, shares: float, cost: floa
         d = _load()
         d.setdefault("closed", [])
         try:
-            name = astock.tencent_quote([code]).get(code, {}).get("name", code)
+            quote = _quote_for_symbol(code)
         except Exception:
-            name = code
+            quote = {"name": code, "currency": _symbol_currency(code)}
         d["closed"].append({
-            "code": code, "name": name, "date": date, "price": price,
+            "code": code, "name": quote["name"], "currency": quote["currency"], "date": date, "price": price,
             "shares": shares, "cost": cost, "pnl": round(pnl, 2),
             "pnl_pct": round((price - cost) / cost * 100, 2) if cost else 0.0,
         })
@@ -126,37 +149,58 @@ def get_portfolio() -> dict:
     with _LOCK:
         d = _load()
     hs = d.get("holdings", [])
-    rows, tmv, tcost = [], 0.0, 0.0
+    rows = []
+    totals_by_currency: dict[str, dict[str, float]] = {}
     if hs:
-        try:
-            quotes = astock.tencent_quote([h["code"] for h in hs])
-        except Exception:
-            quotes = {}
         for h in hs:
-            q = quotes.get(h["code"], {})
-            price = q.get("price", 0.0)
-            mv = price * h["shares"]
+            try:
+                q = _quote_for_symbol(h["code"])
+            except Exception:
+                q = {"name": h["code"], "price": None, "currency": _symbol_currency(h["code"])}
+            price = q.get("price")
+            currency = q.get("currency") or _symbol_currency(h["code"])
             cv = h["cost"] * h["shares"]
-            pnl = mv - cv
+            mv = price * h["shares"] if price is not None else None
+            pnl = mv - cv if mv is not None else None
             rows.append({
                 "code": h["code"], "name": q.get("name", h["code"]),
+                "currency": currency,
                 "price": price, "shares": h["shares"], "cost": h["cost"],
-                "market_value": round(mv, 2), "pnl": round(pnl, 2),
-                "pnl_pct": round(pnl / cv * 100, 2) if cv else 0.0,
+                "market_value": round(mv, 2) if mv is not None else None,
+                "pnl": round(pnl, 2) if pnl is not None else None,
+                "pnl_pct": round(pnl / cv * 100, 2) if pnl is not None and cv else None,
+                "quote_available": price is not None,
             })
-            tmv += mv
-            tcost += cv
-    total_pnl = tmv - tcost
+            if mv is None:
+                continue
+            bucket = totals_by_currency.setdefault(currency, {"market_value": 0.0, "cost": 0.0})
+            bucket["market_value"] += mv
+            bucket["cost"] += cv
+    for currency, bucket in totals_by_currency.items():
+        total_pnl = bucket["market_value"] - bucket["cost"]
+        bucket.update({
+            "currency": currency,
+            "market_value": round(bucket["market_value"], 2),
+            "cost": round(bucket["cost"], 2),
+            "pnl": round(total_pnl, 2),
+            "pnl_pct": round(total_pnl / bucket["cost"] * 100, 2) if bucket["cost"] else 0.0,
+        })
+    only_total = next(iter(totals_by_currency.values()), None) if len(totals_by_currency) == 1 else None
+    legacy_total = only_total or {"market_value": 0.0, "cost": 0.0, "pnl": 0.0, "pnl_pct": 0.0}
     closed = d.get("closed", [])
+    realized_by_currency: dict[str, float] = {}
+    for item in closed:
+        currency = item.get("currency") or _symbol_currency(item.get("code", ""))
+        item.setdefault("currency", currency)
+        realized_by_currency[currency] = realized_by_currency.get(currency, 0.0) + item.get("pnl", 0.0)
     return {
         "holdings": rows,
-        "totals": {
-            "market_value": round(tmv, 2), "cost": round(tcost, 2),
-            "pnl": round(total_pnl, 2),
-            "pnl_pct": round(total_pnl / tcost * 100, 2) if tcost else 0.0,
-        },
+        "totals": legacy_total,
+        "totals_by_currency": totals_by_currency,
+        "mixed_currency": len(totals_by_currency) > 1,
         "closed": closed,
         "realized_pnl": round(sum(c.get("pnl", 0) for c in closed), 2),
+        "realized_pnl_by_currency": {k: round(v, 2) for k, v in realized_by_currency.items()},
         "updated": _now(),
         "last_refresh": d.get("last_refresh"),
     }

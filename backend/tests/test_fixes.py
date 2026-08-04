@@ -61,7 +61,7 @@ def test_portfolio_crud_roundtrip(tmp_pf):
 
 
 def test_portfolio_add_validation(tmp_pf):
-    assert client.post("/api/portfolio/holding", json={"code": "abc", "shares": 1, "cost": 1}).status_code == 400
+    assert client.post("/api/portfolio/holding", json={"code": "BAD SYMBOL", "shares": 1, "cost": 1}).status_code == 400
     assert client.post("/api/portfolio/holding", json={"code": "600519", "shares": 0, "cost": 1}).status_code == 400
 
 
@@ -79,6 +79,19 @@ def test_portfolio_merge_cost_keeps_4_decimals(tmp_pf):
     client.post("/api/portfolio/holding", json={"code": "510300", "shares": 100, "cost": 1.0003})
     h = client.get("/api/portfolio").json()["data"]["holdings"][0]
     assert h["cost"] == pytest.approx(1.0002, abs=1e-9)
+
+
+def test_portfolio_separates_currency_totals(tmp_pf, monkeypatch):
+    def quote(symbol):
+        return {"name": symbol, "price": 10.0, "currency": "USD" if symbol == "AAPL" else "CNY"}
+
+    monkeypatch.setattr(pf, "_quote_for_symbol", quote)
+    client.post("/api/portfolio/holding", json={"code": "600519", "shares": 10, "cost": 8})
+    client.post("/api/portfolio/holding", json={"code": "AAPL", "shares": 2, "cost": 7})
+    data = client.get("/api/portfolio").json()["data"]
+    assert data["mixed_currency"] is True
+    assert set(data["totals_by_currency"]) == {"CNY", "USD"}
+    assert data["totals_by_currency"]["USD"]["pnl"] == pytest.approx(6)
 
 
 # ── issue #12：旧版数据在仓库内 .cache/，重下载会丢 → 自动迁到用户目录 ──

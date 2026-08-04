@@ -166,6 +166,23 @@ def test_dossier_preserves_spec_order(monkeypatch):
     assert [s["tool"] for s in d["sections"]] == [s[0] for s in debate._DOSSIER_SPEC]
 
 
+def test_us_dossier_uses_market_data_and_names_known_gaps(monkeypatch):
+    monkeypatch.setattr(tools, "exec_tool", lambda name, args: {"v": name, "symbol": args.get("symbol")})
+    dossier = debate.build_dossier("AAPL")
+    assert [section["tool"] for section in dossier["sections"]] == [
+        "query_market_snapshot", "query_market_bars", "query_global_stock",
+    ]
+    assert any("监管文件" in gap for gap in dossier["missing"])
+    assert any("新闻" in gap for gap in dossier["missing"])
+
+
+def test_european_dossier_reports_missing_fundamentals(monkeypatch):
+    monkeypatch.setattr(tools, "exec_tool", lambda name, args: {"v": name})
+    dossier = debate.build_dossier("SAP.DE")
+    assert [section["tool"] for section in dossier["sections"]] == ["query_market_snapshot", "query_market_bars"]
+    assert any("财务与估值" in gap for gap in dossier["missing"])
+
+
 def test_failed_stage_still_emits_terminal_event(monkeypatch):
     """角色生成失败也必须发终态事件。
 
@@ -224,7 +241,7 @@ def test_reflect_prompt_forbids_own_judgement():
 # ---- 路由校验 ----
 
 @pytest.mark.parametrize("body,code", [
-    ({"code": "abc", "llm": _LLM}, 400),                       # 非 6 位代码
+    ({"code": "BAD SYMBOL", "llm": _LLM}, 400),                # 非法代码
     ({"code": "600519", "llm": {**_LLM, "model": ""}}, 400),   # 缺模型
     ({"code": "600519", "llm": {**_LLM, "apiKey": ""}}, 400),  # 缺 key
 ])

@@ -8,12 +8,14 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { EarningsSnapshot } from "@/components/ui/EarningsSnapshot";
 import { Disclaimer } from "@/components/ui/Disclaimer";
+import { MarketStockView } from "@/components/market/EuropeanStockView";
 import {
   api, ApiError, type Valuation, type Report, type NewsItem, type ValPercentile, type ValMetric,
   type Financials, type Announcement, type MarginRow, type BlockTradeRow, type HolderRow,
   type DividendRow, type FundFlowRow, type DragonTiger, type Lockup, type Blocks, type HotConcept, type QaRow,
-  type GlobalStock, type HkCashflow,
+  type GlobalStock, type HkCashflow, type MarketSnapshot, type MarketHistoricalSeries,
 } from "@/lib/api";
+import { isUSSymbol, stockDataRoute } from "@/lib/market-symbols";
 import { cn } from "@/lib/utils";
 
 // 金额格式化（后端资金单位：元 / 万元）
@@ -101,6 +103,8 @@ export function StockData() {
   const [qa, setQa] = useState<QaRow[]>([]);
   const [gstock, setGStock] = useState<GlobalStock | null>(null);  // 美股 / 港股
   const [cashflow, setCashflow] = useState<HkCashflow | null>(null);  // 港股现金流量表（仅港股）
+  const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
+  const [marketHistory, setMarketHistory] = useState<MarketHistoricalSeries | null>(null);
   const runIdRef = useRef(0);
 
   const run = async () => {
@@ -109,10 +113,33 @@ export function StockData() {
     const rid = ++runIdRef.current;
     setLoading(true); setErr(null); setDepNote(null); setVal(null); setReports([]); setNews([]); setPctl(null); setFin(null); setAnns([]);
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
-    setGStock(null); setCashflow(null);
+    setGStock(null); setCashflow(null); setMarketSnapshot(null); setMarketHistory(null);
 
-    // 6 位纯数字 = A 股；否则（字母 / 港股短代码）走美股 / 港股（global-stock-data）
-    if (!/^\d{6}$/.test(c)) {
+    const route = stockDataRoute(c);
+
+    // 显式欧洲交易所后缀走新的规范化数据路径；不改变现有 A 股和 global fallback。
+    if (route === "market") {
+      try {
+        const [snapshot, history, supplemental] = await Promise.all([
+          api.marketSnapshot(c),
+          api.marketBars(c, "1y", "1d"),
+          isUSSymbol(c) ? api.globalStock(c).catch(() => null) : Promise.resolve(null),
+        ]);
+        if (rid === runIdRef.current) {
+          setMarketSnapshot(snapshot);
+          setMarketHistory(history);
+          setGStock(supplemental);
+        }
+      } catch (e) {
+        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : "查询失败");
+      } finally {
+        if (rid === runIdRef.current) setLoading(false);
+      }
+      return;
+    }
+
+    // 非 A 股、非显式欧洲后缀：保持原有美股 / 港股 / 韩股路径。
+    if (route === "global") {
       // 港股现金流独立回填（美股返回 404 → 静默留空，卡片不渲染）
       api.hkCashflow(c).then((cf) => { if (rid === runIdRef.current) setCashflow(cf); }).catch(() => { if (rid === runIdRef.current) setCashflow(null); });
       try {
@@ -185,7 +212,7 @@ export function StockData() {
       (fin?.revenue ? `财务(${fin.period ?? "—"})：营收 ${fin.revenue}(同比${fin.revenue_yoy ?? "—"})、净利 ${fin.net_profit ?? "—"}(同比${fin.net_profit_yoy ?? "—"})、ROE ${fin.roe ?? "—"}、毛利率 ${fin.gross_margin ?? "—"}\n` : "") +
       (anns.length ? `近期公告：${anns.slice(0, 5).map((a) => a.title.replace(/^[^:：]*[:：]/, "")).join("；")}\n` : "") +
       `近期研报：${reports.slice(0, 5).map((r) => r.title).join("；") || "无"}`
-    : "还没查询个股。输入 6 位代码后可让 AI 基于客观数据帮你分析。";
+    : "还没查询个股。输入 A 股、美股或欧洲股票代码后可让 AI 基于已接入的客观数据分析。";
 
   const gAiContext = gstock
     ? `个股（${mktName(gstock.market)}）：${gstock.name}（${gstock.code}）\n` +
@@ -194,21 +221,27 @@ export function StockData() {
         ? `财务(${gstock.metrics.report_date})：营收 ${bigMoney(gstock.metrics.revenue, gstock.market)}(同比${round2(gstock.metrics.revenue_yoy, "%")})、归母净利 ${bigMoney(gstock.metrics.net_profit, gstock.market)}、EPS ${gstock.metrics.eps ?? "—"}、ROE ${round2(gstock.metrics.roe, "%")}、毛利率 ${round2(gstock.metrics.gross_margin, "%")}、净利率 ${round2(gstock.metrics.net_margin, "%")}、资产负债率 ${round2(gstock.metrics.debt_ratio, "%")}`
         : "")
     : "";
+  const marketAiContext = marketSnapshot && marketHistory
+    ? `个股：${marketSnapshot.instrument.name}（${marketSnapshot.instrument.provider_symbol}）\n` +
+      `交易所 ${marketSnapshot.instrument.exchange} · 现价 ${marketSnapshot.quote.price ?? "—"} ${marketSnapshot.quote.currency} · 涨跌 ${pctStr(marketSnapshot.quote.change_pct)}\n` +
+      `近一年日线共 ${marketHistory.bars.length} 条；数据源 ${marketSnapshot.quote.source}。\n` +
+      (gstock?.metrics ? gAiContext : "基本面、公告、监管文件与个股新闻数据尚未接齐，分析时必须明确这些缺口。")
+    : "";
 
   return (
     <div>
       <PageHeader
         title="个股数据"
         subtitle="行情 · 估值 · 研报 · 新闻 —— 客观数据配齐，判断交给你的 AI"
-        actions={(val || gstock) && (
+        actions={(val || gstock || marketSnapshot) && (
           <AskAiButton
-            context={gstock ? gAiContext : aiContext}
+            context={marketSnapshot ? marketAiContext : gstock ? gAiContext : aiContext}
             // 本页不换路由就能换标的，必须按代码分开存对话，否则会串台。
             // ⚠️ 用**已解析结果**的代码，不能用输入框的 code——后者一边打字一边变，
             // 而 val/gstock 和 AI 上下文仍描述上一只票，会把旧上下文存到新代码名下。
-            scopeKey={gstock ? `g:${gstock.code}` : val?.code}
+            scopeKey={marketSnapshot ? `m:${marketSnapshot.instrument.provider_symbol}` : gstock ? `g:${gstock.code}` : val?.code}
             label="让 AI 读这些数据"
-            suggestions={gstock
+            suggestions={(gstock || marketSnapshot)
               ? ["这家公司基本面怎么样", "盈利能力如何", "有什么风险"]
               : ["这个估值贵不贵", "机构一致预期怎么看", "近期研报的分歧点", "有什么风险"]}
           />
@@ -216,13 +249,14 @@ export function StockData() {
       />
 
       {/* 查询框 */}
-      <div className="mb-5 flex gap-2">
+      <div className="mb-5 flex flex-wrap gap-2">
         <input
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.]/g, "").toUpperCase().slice(0, 12))}
+          onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))}
           onKeyDown={(e) => e.key === "Enter" && run()}
-          placeholder="A 股 6 位代码，或美股/港股/韩股（AAPL / 00700 / 005930.KS）"
-          className="w-80 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
+          placeholder="A股、美股（AAPL）或欧洲代码（VOD.L / SAP.DE）"
+          aria-label="股票代码"
+          className="min-w-0 flex-1 basis-64 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
         />
         <button
           onClick={run}
@@ -240,10 +274,14 @@ export function StockData() {
         </div>
       )}
 
+      {marketSnapshot && marketHistory && (
+        <MarketStockView snapshot={marketSnapshot} history={marketHistory} />
+      )}
+
       {/* 美股 / 港股视图（global-stock-data，东财域内源） */}
       {gstock && (
         <>
-          <GlassCard glow className="mb-4">
+          {!marketSnapshot && <GlassCard glow className="mb-4">
             <div className="mb-4 flex items-baseline gap-2">
               <h2 className="text-xl font-bold">{gstock.name}</h2>
               <span className="font-mono text-sm text-muted-foreground">{gstock.code}</span>
@@ -267,7 +305,7 @@ export function StockData() {
                 </div>
               ))}
             </div>
-          </GlassCard>
+          </GlassCard>}
 
           {gstock.metrics && (
             <GlassCard className="mb-4">
@@ -591,11 +629,11 @@ export function StockData() {
         </>
       )}
 
-      {!val && !err && !loading && (
+      {!val && !gstock && !marketSnapshot && !err && !loading && (
         <GlassCard>
           <div className="py-10 text-center text-sm text-muted-foreground">
-            输入一个 6 位股票代码，拉取它的行情、估值、研报与新闻。<br />
-            <span className="text-xs text-muted-foreground/60">数据来自公开源（腾讯行情 / 东财研报 / akshare）；Vibe-Research 不预置任何标的、不做推荐。</span>
+            输入 A 股、美股或带交易所后缀的欧洲股票代码。<br />
+            <span className="text-xs text-muted-foreground/60">海外首期提供 Yahoo 行情与历史价格；基本面、公告和新闻按已接入来源如实显示。</span>
           </div>
         </GlassCard>
       )}

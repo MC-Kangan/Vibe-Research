@@ -10,11 +10,13 @@ VibeResearch-专业化建议.md
 my-watchlist.json
 portfolio.json
 public/user-data/
+deploy-data/
 
 # ── 密钥 / 环境（绝不进仓库） ──────────────────────────────────────
 .env
 .env.*
 !.env.example
+!.env.deploy.example
 *.pem
 *.key
 *.secret

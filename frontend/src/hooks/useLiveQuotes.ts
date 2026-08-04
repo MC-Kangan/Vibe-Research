@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Quote } from "@/lib/api";
+import { isAShareSymbol } from "@/lib/market-symbols";
 
 export const LIVE_INTERVAL_MS = 3000;   // A 股 level-1 快照粒度
 const MAX_BACKOFF_MS = 30_000;
@@ -85,7 +86,7 @@ export function useLiveQuotes(codes: string[], enabled: boolean): LiveQuotesStat
     const requested = cs.join(",");
     setLoading(true);
     try {
-      const data = await api.quote(requested);
+      const data = await api.quotes(requested);
       setQuotes(data);
       setUpdatedAt(Date.now());
       setError(null);
@@ -136,7 +137,8 @@ export function useLiveQuotes(codes: string[], enabled: boolean): LiveQuotesStat
       }
     };
 
-    const shouldRun = () => enabled && !document.hidden && isTradingHours() && codesRef.current.length > 0;
+    const hasForeign = () => codesRef.current.some((code) => !isAShareSymbol(code));
+    const shouldRun = () => enabled && !document.hidden && codesRef.current.length > 0 && (hasForeign() || isTradingHours());
 
     const loop = async () => {
       if (cancelled) return;
@@ -149,9 +151,10 @@ export function useLiveQuotes(codes: string[], enabled: boolean): LiveQuotesStat
       setPolling(true);
       const ok = await fetchOnce();
       if (cancelled) return;          // 请求期间被卸载/切换：到此为止，别再排下一拍
+      const baseInterval = hasForeign() ? 30_000 : LIVE_INTERVAL_MS;
       const wait = ok
-        ? LIVE_INTERVAL_MS
-        : Math.min(LIVE_INTERVAL_MS * 2 ** failuresRef.current, MAX_BACKOFF_MS);
+        ? baseInterval
+        : Math.min(baseInterval * 2 ** failuresRef.current, MAX_BACKOFF_MS);
       timer = window.setTimeout(loop, wait);
     };
 

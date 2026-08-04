@@ -1,12 +1,15 @@
 // 关注股票（自选股）—— 只存本地 localStorage，不上传、不进仓库。
-// 行情复用 /api/quote；复盘时把关注股行情一并喂给用户自己的 AI。
+
+import { normalizeStockSymbol } from "@/lib/market-symbols";
 
 const KEY = "vr-watchlist";
 
 export function loadWatch(): string[] {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || "[]");
-    return Array.isArray(v) ? v.filter((c) => /^\d{6}$/.test(c)) : [];
+    return Array.isArray(v)
+      ? Array.from(new Set(v.map((c) => typeof c === "string" ? normalizeStockSymbol(c) : null).filter((c): c is string => Boolean(c))))
+      : [];
   } catch {
     return [];
   }
@@ -22,14 +25,17 @@ export function saveWatch(codes: string[]) {
   }
 }
 
-// 从任意文本里抽取 6 位 A 股代码（逗号 / 空格 / 换行 / 顿号分隔都行，方便一次粘贴一串）。
-export function parseCodes(raw: string): string[] {
-  const tokens = raw.split(/[^\d]+/).filter(Boolean);
-  return Array.from(new Set(tokens.filter((t) => /^\d{6}$/.test(t))));
+// 按常见分隔符批量解析；欧洲股票必须保留 Yahoo 交易所后缀。
+export function parseSymbols(raw: string): string[] {
+  const tokens = raw.split(/[\s,，;；、]+/).filter(Boolean);
+  return Array.from(new Set(tokens.map(normalizeStockSymbol).filter((c): c is string => Boolean(c))));
 }
+
+// 保留旧导出，避免外部调用方断裂。
+export const parseCodes = parseSymbols;
 
 // 把用户输入的一串代码并入已有自选，返回去重后的新列表 + 实际新增数量。
 export function addCodes(existing: string[], raw: string): { next: string[]; added: number } {
-  const incoming = parseCodes(raw).filter((c) => !existing.includes(c));
+  const incoming = parseSymbols(raw).filter((c) => !existing.includes(c));
   return { next: [...existing, ...incoming], added: incoming.length };
 }

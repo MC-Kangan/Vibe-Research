@@ -72,7 +72,7 @@ test("the stock page actually passes a per-symbol scope", async () => {
   );
   assert.match(page, /<AskAiButton[\s\S]*?scopeKey=/);
   // 必须用已解析结果的代码，不能用一边打字一边变的输入框 state
-  assert.match(page, /scopeKey=\{gstock \? `g:\$\{gstock\.code\}` : val\?\.code\}/);
+  assert.match(page, /scopeKey=\{marketSnapshot \? `m:\$\{marketSnapshot\.instrument\.provider_symbol\}` : gstock \? `g:\$\{gstock\.code\}` : val\?\.code\}/);
 });
 
 test("aborted-request cleanup is gated by request identity", () => {

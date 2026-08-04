@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 
 // A股红涨绿跌。全球市场（美股/港股指数）**也沿用红涨**——与整个看板及东财等中国平台一致，
 // 对中国用户最不易看错（Simon 2026-07-05 确认；非国际绿涨惯例，是有意选择，勿改）。
-const pctColor = (p: number) => (p > 0 ? "text-danger" : p < 0 ? "text-success" : "text-muted-foreground");
+const pctColor = (p: number | null | undefined) => p != null && p > 0 ? "text-danger" : p != null && p < 0 ? "text-success" : "text-muted-foreground";
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
 
@@ -59,7 +59,7 @@ export function DailyReview() {
   const refreshWatch = (codes: string[]) => {
     if (!codes.length) { setWatchQuotes({}); return; }
     setWatchLoading(true);
-    api.quote(codes.join(",")).then(setWatchQuotes).catch(() => {}).finally(() => setWatchLoading(false));
+    api.quotes(codes.join(",")).then(setWatchQuotes).catch(() => {}).finally(() => setWatchLoading(false));
   };
 
   useEffect(() => {
@@ -92,8 +92,15 @@ export function DailyReview() {
     if (!hasLlm()) { setNeedConfig(true); return; }
     setReviewLoading(true);
     setReview("");
+    const watchSummary = watchCodes.length
+      ? watchCodes.map((symbol) => {
+          const quote = watchQuotes[symbol];
+          return quote ? `${quote.name}(${symbol}) ${quote.price ?? "—"} ${quote.currency ?? ""}（${quote.change_pct == null ? "—" : `${quote.change_pct > 0 ? "+" : ""}${quote.change_pct.toFixed(2)}%`}）` : `${symbol}（行情未取到）`;
+        }).join("；")
+      : "（未添加关注股票）";
     const prompt =
       `以下是今天 A 股大盘的客观数据：\n${dataSummary}\n\n` +
+      `以下是用户关注的 A 股、美股或欧洲股票行情：\n${watchSummary}\n\n` +
       "请用中文做一段当天大盘复盘：整体涨跌、主要指数表现、盘面值得注意的点。" +
       "只做客观陈述与多视角分析，不预测涨跌、不推荐任何标的、不构成投资建议。";
     try {
@@ -190,9 +197,9 @@ export function DailyReview() {
         <div className="mb-3 flex gap-2">
           <input
             value={watchInput}
-            onChange={(e) => setWatchInput(e.target.value.replace(/[^\d,\s]/g, "").slice(0, 80))}
+            onChange={(e) => setWatchInput(e.target.value.replace(/[^a-zA-Z0-9.,，\s-]/g, "").toUpperCase().slice(0, 160))}
             onKeyDown={(e) => e.key === "Enter" && addWatch()}
-            placeholder="加自选：可批量，如 600519 000858"
+            placeholder="加自选：600519 AAPL VOD.L"
             className="w-60 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
           />
           <button onClick={addWatch}
@@ -213,9 +220,9 @@ export function DailyReview() {
                     <X className="h-3.5 w-3.5" />
                   </button>
                   <p className="truncate text-xs text-muted-foreground">{q?.name || c}</p>
-                  <p className={cn("mt-1 font-mono text-lg font-bold", q ? pctColor(q.change_pct) : "text-muted-foreground/40")}>{q ? q.price : "—"}</p>
+                  <p className={cn("mt-1 font-mono text-lg font-bold", q ? pctColor(q.change_pct) : "text-muted-foreground/40")}>{q?.price ?? "—"} <span className="text-[10px] font-normal text-muted-foreground">{q?.currency}</span></p>
                   <p className={cn("text-xs", q ? pctColor(q.change_pct) : "text-muted-foreground/40")}>
-                    {q ? `${q.change_pct > 0 ? "+" : ""}${q.change_pct}%` : c}
+                    {q?.change_pct != null ? `${q.change_pct > 0 ? "+" : ""}${q.change_pct.toFixed(2)}%` : c}
                   </p>
                 </div>
               );

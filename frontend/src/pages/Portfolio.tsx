@@ -6,12 +6,13 @@ import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { api, ApiError, type PortfolioData } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { normalizeStockSymbol } from "@/lib/market-symbols";
 
 const REFRESH_MS = 30 * 60 * 1000; // 每半小时自动刷新
-const pnlColor = (v: number) => (v > 0 ? "text-danger" : v < 0 ? "text-success" : "text-muted-foreground");
-const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+const pnlColor = (v: number | null) => v != null && v > 0 ? "text-danger" : v != null && v < 0 ? "text-success" : "text-muted-foreground";
+const fmt = (v: number | null) => v == null ? "—" : v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 // 单价类（现价/成本/清仓价）最多 4 位小数：ETF/基金常见 3-4 位，截断成 2 位会与市值/盈亏对不上账
-const fmtPx = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
+const fmtPx = (v: number | null) => v == null ? "—" : v.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
 
 export function Portfolio() {
   const [data, setData] = useState<PortfolioData | null>(null);
@@ -48,12 +49,13 @@ export function Portfolio() {
   }, [load]);
 
   const add = async () => {
-    if (!/^\d{6}$/.test(code.trim())) { setErr("请输入 6 位股票代码"); return; }
+    const symbol = normalizeStockSymbol(code);
+    if (!symbol) { setErr("请输入 A 股、美股或带交易所后缀的欧洲股票代码"); return; }
     const s = parseFloat(shares), c = parseFloat(cost);
     if (!(s > 0) || !Number.isFinite(c)) { setErr("数量须大于 0，成本价请填数字（可为负）"); return; }
     setAdding(true); setErr(null);
     try {
-      setData(await api.addHolding(code.trim(), s, c));
+      setData(await api.addHolding(symbol, s, c));
       setCode(""); setShares(""); setCost("");
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "添加失败");
@@ -67,13 +69,14 @@ export function Portfolio() {
   };
 
   const addClose = async () => {
-    if (!/^\d{6}$/.test(cCode.trim())) { setErr("清仓记录：请输入 6 位代码"); return; }
+    const symbol = normalizeStockSymbol(cCode);
+    if (!symbol) { setErr("清仓记录：请输入受支持的股票代码"); return; }
     const p = parseFloat(cPrice), s = parseFloat(cShares), c = parseFloat(cCost);
     if (!cDate) { setErr("请选清仓日期"); return; }
     if (!(p > 0) || !(s > 0) || !Number.isFinite(c)) { setErr("清仓价 / 股数须大于 0，成本请填数字（可为负）"); return; }
     setClosing(true); setErr(null);
     try {
-      setData(await api.closePosition(cCode.trim(), cDate, p, s, c));
+      setData(await api.closePosition(symbol, cDate, p, s, c));
       setCCode(""); setCDate(""); setCPrice(""); setCShares(""); setCCost("");
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "添加清仓记录失败");
@@ -88,11 +91,12 @@ export function Portfolio() {
 
   const holdings = data?.holdings || [];
   const totals = data?.totals;
+  const currencyTotals = Object.values(data?.totals_by_currency || {});
   const closed = data?.closed || [];
 
   const aiContext = totals
-    ? `我的持仓（本地数据）：\n` + holdings.map((h) => `${h.name}(${h.code}) ${h.shares}股 成本${h.cost} 现价${h.price} 浮盈${h.pnl}(${h.pnl_pct}%)`).join("\n") +
-      `\n汇总：市值${totals.market_value} 总浮盈${totals.pnl}(${totals.pnl_pct}%)`
+    ? `我的持仓（本地数据）：\n` + holdings.map((h) => `${h.name}(${h.code}) ${h.shares}股 成本${h.cost} 现价${h.price} 浮盈${h.pnl} ${h.currency}(${h.pnl_pct}%)`).join("\n") +
+      `\n分币种汇总：` + currencyTotals.map((t) => `${t.currency} 市值${t.market_value} 浮盈${t.pnl}(${t.pnl_pct}%)`).join("；")
     : "我的持仓：暂无记录。";
 
   return (
@@ -121,18 +125,22 @@ export function Portfolio() {
       </div>
 
       {/* 汇总 */}
-      {totals && holdings.length > 0 && (
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            { k: "总市值", v: fmt(totals.market_value), c: "text-foreground" },
-            { k: "总成本", v: fmt(totals.cost), c: "text-foreground" },
-            { k: "浮动盈亏", v: (totals.pnl > 0 ? "+" : "") + fmt(totals.pnl), c: pnlColor(totals.pnl) },
-            { k: "盈亏比例", v: (totals.pnl_pct > 0 ? "+" : "") + totals.pnl_pct + "%", c: pnlColor(totals.pnl) },
-          ].map((m) => (
-            <GlassCard key={m.k} className="p-3">
-              <p className="text-xs text-muted-foreground">{m.k}</p>
-              <p className={cn("mt-1 font-mono text-lg font-bold", m.c)}>{m.v}</p>
-            </GlassCard>
+      {currencyTotals.length > 0 && holdings.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {currencyTotals.map((total) => (
+            <div key={total.currency} className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { k: `总市值 · ${total.currency}`, v: fmt(total.market_value), c: "text-foreground" },
+                { k: `总成本 · ${total.currency}`, v: fmt(total.cost), c: "text-foreground" },
+                { k: "浮动盈亏", v: (total.pnl > 0 ? "+" : "") + fmt(total.pnl), c: pnlColor(total.pnl) },
+                { k: "盈亏比例", v: (total.pnl_pct > 0 ? "+" : "") + total.pnl_pct + "%", c: pnlColor(total.pnl) },
+              ].map((m) => (
+                <GlassCard key={m.k} className="p-3">
+                  <p className="text-xs text-muted-foreground">{m.k}</p>
+                  <p className={cn("mt-1 font-mono text-lg font-bold", m.c)}>{m.v}</p>
+                </GlassCard>
+              ))}
+            </div>
           ))}
         </div>
       )}
@@ -143,8 +151,8 @@ export function Portfolio() {
         <div className="flex flex-wrap items-end gap-2">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">股票代码</label>
-            <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 位代码"
-              className="w-28 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
+            <input value={code} onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))} placeholder="600519 / AAPL / VOD.L"
+              className="w-48 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">数量（股）</label>
@@ -195,12 +203,12 @@ export function Portfolio() {
                       <span className="font-medium">{h.name}</span>
                       <span className="ml-1.5 font-mono text-xs text-muted-foreground/60">{h.code}</span>
                     </td>
-                    <td className="px-2 py-2.5 font-mono">{fmtPx(h.price)}</td>
+                    <td className="px-2 py-2.5 font-mono">{fmtPx(h.price)} <span className="text-[10px] text-muted-foreground">{h.currency}</span></td>
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmt(h.shares)}</td>
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmtPx(h.cost)}</td>
                     <td className="px-2 py-2.5 font-mono">{fmt(h.market_value)}</td>
-                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl > 0 ? "+" : ""}{fmt(h.pnl)}</td>
-                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl_pct > 0 ? "+" : ""}{h.pnl_pct}%</td>
+                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl != null && h.pnl > 0 ? "+" : ""}{fmt(h.pnl)}</td>
+                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl_pct == null ? "—" : `${h.pnl_pct > 0 ? "+" : ""}${h.pnl_pct}%`}</td>
                     <td className="px-2 py-2.5">
                       <button onClick={() => remove(h.code)} className="text-muted-foreground/50 hover:text-destructive" title="删除">
                         <Trash2 className="h-3.5 w-3.5" />
@@ -220,8 +228,8 @@ export function Portfolio() {
         <div className="flex flex-wrap items-end gap-2">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">股票代码</label>
-            <input value={cCode} onChange={(e) => setCCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 位代码"
-              className="w-24 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
+            <input value={cCode} onChange={(e) => setCCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))} placeholder="AAPL / SAP.DE"
+              className="w-36 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">清仓日期</label>
@@ -255,7 +263,9 @@ export function Portfolio() {
         <h3 className="text-sm font-semibold text-muted-foreground">已清仓</h3>
         {closed.length > 0 && data && (
           <span className="text-sm">
-            已实现盈亏合计 <b className={cn("font-mono", pnlColor(data.realized_pnl))}>{data.realized_pnl > 0 ? "+" : ""}{fmt(data.realized_pnl)}</b>
+            已实现盈亏 {Object.entries(data.realized_pnl_by_currency || {}).map(([currency, value]) => (
+              <b key={currency} className={cn("ml-2 font-mono", pnlColor(value))}>{currency} {value > 0 ? "+" : ""}{fmt(value)}</b>
+            ))}
           </span>
         )}
       </div>
@@ -280,7 +290,7 @@ export function Portfolio() {
                       <span className="ml-1.5 font-mono text-xs text-muted-foreground/60">{c.code}</span>
                     </td>
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{c.date}</td>
-                    <td className="px-2 py-2.5 font-mono">{fmtPx(c.price)}</td>
+                    <td className="px-2 py-2.5 font-mono">{fmtPx(c.price)} <span className="text-[10px] text-muted-foreground">{c.currency}</span></td>
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmt(c.shares)}</td>
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmtPx(c.cost)}</td>
                     <td className={cn("px-2 py-2.5 font-mono", pnlColor(c.pnl))}>{c.pnl > 0 ? "+" : ""}{fmt(c.pnl)}</td>

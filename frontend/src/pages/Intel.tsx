@@ -9,6 +9,7 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { api, ApiError, type RadarData, type Industry, type Announcement, type NewsItem } from "@/lib/api";
 import { loadWatch } from "@/lib/watchlist";
+import { isAShareSymbol } from "@/lib/market-symbols";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { cn } from "@/lib/utils";
 
@@ -199,14 +200,15 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
       // 股名（一次批量），失败则退回显示代码
       const nameOf: Record<string, string> = {};
       try {
-        const quotes = await api.quote(cs.join(","));
+        const quotes = await api.quotes(cs.join(","));
         for (const c of cs) if (quotes[c]?.name) nameOf[c] = quotes[c].name;
       } catch { /* 忽略：无股名不影响公告/新闻 */ }
 
       const out: FeedRow[] = [];
+      const feedCodes = cs.filter(isAShareSymbol);
       if (kind === "filings") {
         const res = await Promise.all(
-          cs.map((c) => api.announcements(c).then((a) => ({ c, a })).catch(() => ({ c, a: [] as Announcement[] }))),
+          feedCodes.map((c) => api.announcements(c).then((a) => ({ c, a })).catch(() => ({ c, a: [] as Announcement[] }))),
         );
         for (const { c, a } of res)
           for (const x of a)
@@ -214,7 +216,7 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
       } else {
         let dep: string | null = null;
         const res = await Promise.all(
-          cs.map((c) =>
+          feedCodes.map((c) =>
             api.news(c).then((n) => ({ c, n })).catch((e) => {
               if (e instanceof ApiError && e.status === 501) dep = e.message;
               return { c, n: [] as NewsItem[] };
@@ -249,7 +251,7 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
   if (!codes.length) {
     return (
       <div className="rounded-lg border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground/70">
-        还没有关注股票。到<Link to="/daily-review" className="text-primary">「每日复盘」</Link>加自选（6 位代码），这里会汇总它们的{kind === "filings" ? "公告" : "新闻"}。
+        还没有关注股票。到<Link to="/daily-review" className="text-primary">「每日复盘」</Link>加自选，这里会汇总已接入来源的{kind === "filings" ? "公告" : "新闻"}。
       </div>
     );
   }
@@ -278,7 +280,11 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
       ) : loading && rows.length === 0 ? (
         <p className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> 正在汇总关注股的{kind === "filings" ? "公告" : "新闻"}…</p>
       ) : rows.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground/60">关注列表里的个股近期暂无{kind === "filings" ? "公告" : "新闻"}。</p>
+        <p className="py-8 text-center text-sm text-muted-foreground/60">
+          {codes.some((code) => !isAShareSymbol(code))
+            ? `暂无可显示内容；美股和欧洲股票的${kind === "filings" ? "监管文件/公告" : "新闻"}数据源尚未接入。`
+            : `关注列表里的个股近期暂无${kind === "filings" ? "公告" : "新闻"}。`}
+        </p>
       ) : (
         <div className="space-y-2">
           {rows.map((r, i) => (

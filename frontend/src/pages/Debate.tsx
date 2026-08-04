@@ -8,6 +8,7 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { debateStream, type DebateStage } from "@/lib/agents";
 import { addNote } from "@/lib/notes";
 import { ApiError } from "@/lib/api";
+import { normalizeStockSymbol } from "@/lib/market-symbols";
 
 interface StageBox {
   stage: DebateStage;
@@ -45,8 +46,9 @@ export function Debate() {
   };
 
   async function start() {
-    const c = code.trim();
-    if (!/^\d{6}$/.test(c)) { setError("请输入 6 位 A 股代码"); return; }
+    const c = normalizeStockSymbol(code);
+    if (!c) { setError("请输入 A 股、美股或带交易所后缀的欧洲股票代码"); return; }
+    setCode(c);
     reset();
     setRunning(true);
     const ctrl = new AbortController();
@@ -103,11 +105,11 @@ export function Debate() {
             <label className="mb-1 block text-xs text-muted-foreground">股票代码</label>
             <input
               value={code}
-              onChange={(e) => setCode(e.target.value.replace(/[^\d]/g, "").slice(0, 6))}
+              onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))}
               onKeyDown={(e) => { if (e.key === "Enter" && !running) start(); }}
-              placeholder="6 位代码，如 600519"
+              placeholder="600519 / AAPL / VOD.L"
               disabled={running}
-              className="w-44 rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-sm outline-none focus:border-primary/60"
+              className="w-56 rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-sm outline-none focus:border-primary/60"
             />
           </div>
           <div>
