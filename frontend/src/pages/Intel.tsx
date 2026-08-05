@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { TrendingUp, FileText, Newspaper, Rss, RefreshCw, Loader2, ExternalLink, AlertCircle, Sparkles, Lightbulb, Star } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -13,7 +13,7 @@ import { hasLlm, chatStream } from "@/lib/llm";
 import { cn } from "@/lib/utils";
 
 const TABS = [
-  { key: "events", label: "事件概率", icon: TrendingUp, integrated: false, desc: "全球宏观预期概率（公开数据、免登录只读），后续接入" },
+  { key: "events", label: "事件概率（规划中）", icon: TrendingUp, integrated: false, desc: "计划汇总宏观与市场事件的公开概率数据；目前尚未接入任何市场。" },
   { key: "filings", label: "监管文件", icon: FileText, integrated: true, desc: "汇总关注列表中可用的美国 SEC、A股公告与欧洲文件缺口" },
   { key: "news", label: "公司新闻", icon: Newspaper, integrated: true, desc: "汇总关注列表中可用的公司新闻" },
   { key: "earnings", label: "Earnings", icon: TrendingUp, integrated: true, desc: "汇总关注列表中可用的 earnings 实际值、预期值与 surprise" },
@@ -193,7 +193,7 @@ function WatchlistFeed({ kind }: { kind: IntelligenceKind }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = async (cs: string[]) => {
+  const load = useCallback(async (cs: string[]) => {
     if (!cs.length) { setRows([]); setGaps([]); return; }
     setLoading(true); setErr(null);
     try {
@@ -205,7 +205,7 @@ function WatchlistFeed({ kind }: { kind: IntelligenceKind }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [kind]);
 
   useEffect(() => { const cs = loadWatch(); setCodes(cs); load(cs); }, [load]);
 
@@ -299,7 +299,9 @@ export function Intel() {
         ) : (
           <>
             <p className="text-sm text-muted-foreground">{cur.desc}</p>
-            <div className="mt-4 rounded-lg border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground/70">该数据源规划中——可先用右侧「Investment News」看 12 赛道公开资讯，或用「A 股公告 / 公开新闻」看关注股动态。</div>
+            <div className="mt-4 rounded-lg border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground/70">
+              当前 A股、美股和欧洲市场都没有事件概率数据。后续可接入预测市场概率与宏观事件日历；现阶段请使用「Investment News」「监管文件」「公司新闻」和「Earnings」。
+            </div>
           </>
         )}
       </GlassCard>

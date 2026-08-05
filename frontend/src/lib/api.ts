@@ -140,6 +140,39 @@ export interface BenchmarkData {
   gaps: { key: string; symbol: string; message: string }[];
   fetched_at: string;
 }
+export interface MarketOverviewQuote {
+  symbol: string; name: string; market: "CN" | "US" | "EU";
+  price: number | null; change_pct: number | null; currency: string | null; source: string;
+}
+export interface MarketBreadth { total: number; up: number; down: number; flat: number; unavailable: number }
+export interface MarketWatchlistOverview {
+  symbols: string[]; quotes: MarketOverviewQuote[]; breadth: MarketBreadth; movers: MarketOverviewQuote[];
+}
+export interface MarketSectorProxy {
+  key: string; name: string; symbol: string; region: "US" | "Europe";
+  price: number | null; change_pct: number | null; currency: string | null; source: string;
+}
+export interface MarketOverviewData {
+  benchmarks: BenchmarkData;
+  watchlist: MarketWatchlistOverview;
+  sectors: { US: MarketSectorProxy[]; Europe: MarketSectorProxy[] };
+  gaps: { symbol: string; message: string; scope?: string }[];
+  fetched_at: string; notes: string[];
+}
+export interface MarketMoodMover {
+  symbol: string; date: string; close: number; change_pct: number | null;
+  above_ma: Record<"20" | "50" | "200", boolean | null>;
+  new_52w_high: boolean; new_52w_low: boolean; volume_ratio: number | null; unusual_volume: boolean;
+}
+export interface MarketMoodData {
+  market: "US" | "Europe";
+  universe: { label: string; benchmark: string; size: number };
+  mood: "偏强" | "中性" | "偏弱";
+  breadth: { total: number; available: number; up: number; down: number; flat: number; unavailable: number };
+  participation: Record<"20" | "50" | "200", { above: number; total: number; pct: number | null }>;
+  new_highs: number; new_lows: number; unusual_volume: number; movers: MarketMoodMover[];
+  gaps: { symbol: string; message: string }[]; as_of: string | null; fetched_at: string; source: string; notes: string[];
+}
 export type IntelligenceKind = "filings" | "news" | "earnings";
 export interface IntelligenceItem {
   symbol: string; market: "CN" | "US" | "EU"; kind: IntelligenceKind;
@@ -316,7 +349,9 @@ export interface SecFiling {
 export interface SecFilings { symbol: string; cik: string; company: string | null; source: string; items: SecFiling[] }
 export interface SecFactValue {
   label: string | null; val: number | null; unit: string; fy?: number; fp?: string;
-  form?: string; filed?: string; start?: string; end?: string;
+  form?: string; filed?: string; start?: string; end?: string; tag?: string;
+  period_type?: "instant" | "quarterly" | "year_to_date" | "annual" | "duration";
+  duration_days?: number | null;
 }
 export interface SecFacts { symbol: string; cik: string; company: string | null; source: string; facts: Record<string, SecFactValue> }
 
@@ -328,6 +363,10 @@ export const api = {
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
   benchmarks: () => get<BenchmarkData>("/market-data/benchmarks"),
+  internationalOverview: (symbols: string[] = []) => get<MarketOverviewData>(
+    `/market-data/overview${symbols.length ? `?symbols=${encodeURIComponent(symbols.join(","))}` : ""}`,
+  ),
+  marketMood: (market: "US" | "Europe") => get<MarketMoodData>(`/market-data/mood?market=${market}`),
   dataSourceStatus: () => get<DataSourceStatus>("/data-sources/status"),
   intelligenceFeed: (symbols: string[], kinds: IntelligenceKind[] = ["filings", "news", "earnings"], limitPerSymbol = 5) =>
     request<IntelligenceFeed>("/intelligence/feed", "POST", { symbols, kinds, limit_per_symbol: limitPerSymbol }),

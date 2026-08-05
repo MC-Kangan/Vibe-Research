@@ -49,3 +49,16 @@ def test_intelligence_preserves_a_share_feed_and_reports_unsupported_earnings(mo
     assert result["items"][0]["kind"] == "filings"
     assert result["gaps"][0]["reason"] == "unsupported"
 
+
+def test_intelligence_normalizes_epoch_timestamps_before_cross_source_sort(monkeypatch):
+    monkeypatch.setattr(market_intelligence.market_data, "get_company_news", lambda symbol, days, limit: {
+        "items": [{"headline": "newer news", "published_at": 1785945600, "source": "trial", "url": None, "summary": None, "category": "company"}],
+    })
+    monkeypatch.setattr(market_intelligence.market_data, "get_filings", lambda symbol, limit: {
+        "items": [{"primaryDocDescription": "older filing", "filingDate": "2026-08-04", "url": None, "form": "8-K", "reportDate": "2026-08-04"}],
+    })
+
+    result = market_intelligence.collect(["AAPL"], ["news", "filings"], 2)
+
+    assert result["items"][0]["title"] == "newer news"
+    assert result["items"][0]["published_at"].startswith("2026-08-05T")

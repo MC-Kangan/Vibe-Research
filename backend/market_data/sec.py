@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from datetime import date
 
 import requests
 
@@ -32,6 +33,55 @@ _FACT_TAGS = {
     "cash": ("CashAndCashEquivalentsAtCarryingValue",),
     "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",),
 }
+_DURATION_FACTS = {"revenue", "net_income", "diluted_eps", "operating_cash_flow"}
+_FINANCIAL_FORMS = {"10-Q", "10-Q/A", "10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}
+
+
+def _duration_days(row: dict) -> int | None:
+    try:
+        return (date.fromisoformat(str(row["end"])) - date.fromisoformat(str(row["start"]))).days
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _period_type(label: str, row: dict, duration_days: int | None) -> str:
+    if label not in _DURATION_FACTS:
+        return "instant"
+    if duration_days is None:
+        return "duration"
+    form = str(row.get("form") or "").upper()
+    if form.startswith(("10-K", "20-F", "40-F")) or duration_days >= 300:
+        return "annual"
+    if duration_days <= 120:
+        return "quarterly"
+    return "year_to_date"
+
+
+def _select_observation(label: str, fact: dict) -> dict | None:
+    units = fact.get("units") or {}
+    observations = [
+        {**row, "unit": unit}
+        for unit, rows in units.items() for row in (rows or []) if isinstance(row, dict)
+    ]
+    preferred = [row for row in observations if str(row.get("form") or "").upper() in _FINANCIAL_FORMS]
+    observations = preferred or observations
+    if not observations:
+        return None
+
+    latest_end = max(str(row.get("end") or "") for row in observations)
+    observations = [row for row in observations if str(row.get("end") or "") == latest_end]
+    latest_filed = max(str(row.get("filed") or "") for row in observations)
+    observations = [row for row in observations if str(row.get("filed") or "") == latest_filed]
+
+    if label in _DURATION_FACTS:
+        annual = any(str(row.get("form") or "").upper().startswith(("10-K", "20-F", "40-F")) for row in observations)
+        observations.sort(
+            key=lambda row: _duration_days(row) if _duration_days(row) is not None else (-1 if annual else 10_000),
+            reverse=annual,
+        )
+    selected = observations[0]
+    duration_days = _duration_days(selected)
+    return {**selected, "duration_days": duration_days, "period_type": _period_type(label, selected, duration_days)}
 
 
 class SecEdgarProvider:
@@ -120,17 +170,14 @@ class SecEdgarProvider:
         us_gaap = (((payload.get("facts") or {}).get("us-gaap")) or {}) if isinstance(payload, dict) else {}
         selected = {}
         for label, candidates in _FACT_TAGS.items():
-            fact = next((us_gaap[tag] for tag in candidates if tag in us_gaap), None)
-            if not isinstance(fact, dict):
-                continue
-            units = fact.get("units") or {}
-            observations = [
-                {**row, "unit": unit}
-                for unit, rows in units.items() for row in (rows or []) if isinstance(row, dict)
-            ]
-            observations.sort(key=lambda row: (str(row.get("end") or ""), str(row.get("filed") or "")), reverse=True)
-            if observations:
-                selected[label] = {"label": fact.get("label"), **observations[0]}
+            for tag in candidates:
+                fact = us_gaap.get(tag)
+                if not isinstance(fact, dict):
+                    continue
+                observation = _select_observation(label, fact)
+                if observation:
+                    selected[label] = {"label": fact.get("label"), "tag": tag, **observation}
+                    break
         return {"symbol": ticker, "cik": f"{cik:010d}", "company": payload.get("entityName") if isinstance(payload, dict) else None, "source": self.source, "facts": selected}
 
 

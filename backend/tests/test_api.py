@@ -101,6 +101,29 @@ def test_benchmarks_envelope(monkeypatch):
     assert response.json()["data"]["items"] == []
 
 
+def test_market_overview_envelope(monkeypatch):
+    monkeypatch.setattr(app_module.market_data, "get_market_overview", lambda symbols: {
+        "symbols": symbols, "watchlist": {"breadth": {}}, "sectors": {}, "benchmarks": {},
+    })
+    response = client.get("/api/market-data/overview?symbols=aapl,SAP.DE")
+    assert response.status_code == 200
+    assert response.json()["data"]["symbols"] == ["AAPL", "SAP.DE"]
+
+
+def test_market_overview_rejects_more_than_30_symbols():
+    symbols = ",".join(f"AAPL-{index}" for index in range(31))
+    response = client.get(f"/api/market-data/overview?symbols={symbols}")
+    assert response.status_code == 400
+
+
+def test_market_mood_envelope_and_validation(monkeypatch):
+    monkeypatch.setattr(app_module.market_data, "get_market_mood", lambda market_name: {"market": market_name})
+    response = client.get("/api/market-data/mood?market=Europe")
+    assert response.status_code == 200
+    assert response.json()["data"] == {"market": "Europe"}
+    assert client.get("/api/market-data/mood?market=CN").status_code == 400
+
+
 def test_intelligence_feed_normalizes_symbols_and_dispatches(monkeypatch):
     monkeypatch.setattr(app_module.market_intelligence, "collect", lambda symbols, kinds, limit: {
         "symbols": symbols, "kinds": kinds, "limit": limit, "items": [], "gaps": [], "fetched_at": "now",

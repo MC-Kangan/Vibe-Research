@@ -367,6 +367,27 @@ def market_data_benchmarks():
     return {"data": market_data.get_benchmarks()}
 
 
+@app.get("/api/market-data/overview")
+def market_data_overview(symbols: str = Query("", max_length=1000)):
+    """US/European overview plus watchlist-derived breadth and movers."""
+    raw = [item.strip() for item in symbols.split(",") if item.strip()]
+    if len(raw) > 30:
+        raise HTTPException(400, "symbols 最多包含 30 个股票代码")
+    try:
+        canonical = list(dict.fromkeys(_validate_stock_symbol(item) for item in raw))
+    except HTTPException:
+        raise
+    return {"data": market_data.get_market_overview(canonical)}
+
+
+@app.get("/api/market-data/mood")
+def market_data_mood(market_name: str = Query("US", alias="market")):
+    """Cached daily mood statistics for the US or EURO STOXX 50 basket."""
+    if market_name not in {"US", "Europe"}:
+        raise HTTPException(400, "market 仅支持 US 或 Europe")
+    return {"data": market_data.get_market_mood(market_name)}
+
+
 @app.get("/api/data-sources/status")
 def data_sources_status():
     """Configuration status only; never returns provider credentials."""

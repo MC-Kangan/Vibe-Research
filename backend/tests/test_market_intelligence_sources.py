@@ -96,6 +96,41 @@ def test_sec_companyfacts_selects_latest_observation():
     assert result["facts"]["net_income"]["unit"] == "USD"
 
 
+def test_sec_companyfacts_prefers_quarter_over_ytd_for_same_filing():
+    http = RoutedHttp([
+        ("company_tickers", {"0": {"ticker": "AAPL", "cik_str": 320193}}),
+        ("companyfacts", {"entityName": "Apple Inc.", "facts": {"us-gaap": {
+            "NetIncomeLoss": {"label": "Net income", "units": {"USD": [
+                {"start": "2026-01-01", "end": "2026-06-30", "filed": "2026-08-01", "form": "10-Q", "val": 45},
+                {"start": "2026-04-01", "end": "2026-06-30", "filed": "2026-08-01", "form": "10-Q", "val": 25},
+            ]}},
+        }}}),
+    ])
+
+    fact = SecEdgarProvider(http=http, user_agent="Test test@example.com").company_facts("AAPL")["facts"]["net_income"]
+
+    assert fact["val"] == 25
+    assert fact["period_type"] == "quarterly"
+    assert fact["duration_days"] == 90
+
+
+def test_sec_companyfacts_uses_fallback_tag_when_preferred_tag_is_empty():
+    http = RoutedHttp([
+        ("company_tickers", {"0": {"ticker": "AAPL", "cik_str": 320193}}),
+        ("companyfacts", {"entityName": "Apple Inc.", "facts": {"us-gaap": {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": {"label": "Revenue", "units": {}},
+            "Revenues": {"label": "Revenue", "units": {"USD": [
+                {"start": "2026-01-01", "end": "2026-12-31", "filed": "2027-02-01", "form": "10-K", "val": 100},
+            ]}},
+        }}}),
+    ])
+
+    fact = SecEdgarProvider(http=http, user_agent="Test test@example.com").company_facts("AAPL")["facts"]["revenue"]
+
+    assert fact["tag"] == "Revenues"
+    assert fact["period_type"] == "annual"
+
+
 def test_sec_rejects_european_symbol_before_filing_lookup():
     provider = SecEdgarProvider(http=RoutedHttp([]))
     with pytest.raises(UnsupportedSymbolError):

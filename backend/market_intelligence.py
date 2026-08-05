@@ -13,6 +13,25 @@ _MAX_SYMBOLS = 30
 _MAX_ITEMS = 10
 
 
+def _normalize_published_at(value) -> str:
+    """Return one sortable UTC representation across provider timestamp formats."""
+    if value is None or value == "":
+        return ""
+    raw = str(value).strip()
+    try:
+        if isinstance(value, (int, float)) or raw.replace(".", "", 1).isdigit():
+            parsed = datetime.fromtimestamp(float(value), timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            else:
+                parsed = parsed.astimezone(timezone.utc)
+        return parsed.isoformat().replace("+00:00", "Z")
+    except (OverflowError, TypeError, ValueError):
+        return raw
+
+
 def _market(symbol: str) -> str:
     if symbol.isdigit() and len(symbol) == 6:
         return "CN"
@@ -23,7 +42,7 @@ def _item(symbol: str, market: str, kind: str, title: str, published_at=None,
           source=None, url=None, summary=None, meta=None) -> dict:
     return {
         "symbol": symbol, "market": market, "kind": kind,
-        "title": title or "", "summary": summary, "published_at": str(published_at or ""),
+        "title": title or "", "summary": summary, "published_at": _normalize_published_at(published_at),
         "source": source or "", "url": url, "meta": meta or {},
     }
 

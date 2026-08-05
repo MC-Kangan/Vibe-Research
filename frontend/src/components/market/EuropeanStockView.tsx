@@ -32,6 +32,9 @@ const factLabels: Record<string, string> = {
   revenue: "营收", net_income: "净利润", diluted_eps: "摊薄 EPS", assets: "总资产",
   liabilities: "总负债", cash: "现金及等价物", operating_cash_flow: "经营现金流",
 };
+const periodLabels: Record<string, string> = {
+  instant: "时点", quarterly: "单季", year_to_date: "年初至今", annual: "全年", duration: "期间",
+};
 
 const factValue = (value: number | null, unit: string) => {
   if (value == null) return "—";
@@ -96,7 +99,9 @@ export function MarketStockView({ snapshot, history, news, earnings, filings, se
               <div key={key} className="rounded-lg bg-muted/30 p-3">
                 <p className="text-xs text-muted-foreground">{factLabels[key] || fact.label || key}</p>
                 <p className="mt-0.5 font-mono text-sm font-bold">{factValue(fact.val, fact.unit)}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground">{fact.end || "—"} · {fact.form || "—"}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  {fact.start ? `${fact.start} → ${fact.end || "—"}` : fact.end || "—"} · {periodLabels[fact.period_type || ""] || "期间未知"} · {fact.form || "—"}
+                </p>
               </div>
             ))}
           </div>

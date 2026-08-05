@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type BenchmarkData, type IntelligenceFeed } from "@/lib/api";
+import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type BenchmarkData, type IntelligenceFeed, type MarketOverviewData, type MarketMoodData } from "@/lib/api";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
@@ -16,12 +16,19 @@ import { cn } from "@/lib/utils";
 // International convention across the refocused app: green up, red down.
 const pctColor = (p: number | null | undefined) => p != null && p > 0 ? "text-success" : p != null && p < 0 ? "text-danger" : "text-muted-foreground";
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+const pctText = (v: number | null | undefined) => v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
+type MarketFocus = "US" | "Europe" | "CN";
+const marketLabels: Record<MarketFocus, string> = { US: "美国", Europe: "欧洲", CN: "A股" };
 
 export function DailyReview() {
   const [indices, setIndices] = useState<IndexQuote[]>([]);
   const [idxErr, setIdxErr] = useState(false);
   const [benchmarks, setBenchmarks] = useState<BenchmarkData | null>(null);
+  const [internationalOverview, setInternationalOverview] = useState<MarketOverviewData | null>(null);
+  const [marketFocus, setMarketFocus] = useState<MarketFocus>("US");
+  const [marketMood, setMarketMood] = useState<MarketMoodData | null>(null);
+  const [moodDone, setMoodDone] = useState(false);
   const [review, setReview] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewErr, setReviewErr] = useState<string | null>(null);
@@ -41,18 +48,36 @@ export function DailyReview() {
   const [emoDone, setEmoDone] = useState(false);
   const [toDone, setToDone] = useState(false);
 
-  const loadIndices = () => {
+  const loadInternational = (codes: string[]) => {
+    api.internationalOverview(codes).then((data) => {
+      setInternationalOverview(data);
+      setBenchmarks(data.benchmarks);
+    }).catch(() => { setInternationalOverview(null); setBenchmarks(null); });
+  };
+
+  const loadMarketMood = (market: "US" | "Europe") => {
+    setMoodDone(false);
+    setMarketMood(null);
+    api.marketMood(market).then(setMarketMood).catch(() => setMarketMood(null)).finally(() => setMoodDone(true));
+  };
+
+  const loadAShareTools = () => {
+    setIdxErr(false); setOvDone(false); setEmoDone(false); setToDone(false);
     api.indices().then(setIndices).catch(() => setIdxErr(true));
-    api.benchmarks().then(setBenchmarks).catch(() => setBenchmarks(null));
     api.marketOverview().then(setOverview).catch(() => {}).finally(() => setOvDone(true));
     api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
     api.turnoverTop().then(setTurnover).catch(() => {}).finally(() => setToDone(true));
   };
 
+  const refreshSelectedMarket = () => {
+    if (marketFocus === "CN") loadAShareTools();
+    else { loadInternational(watchCodes); loadMarketMood(marketFocus); }
+  };
+
   // 数据块占位：请求没回来 = 加载中；回来了但为空 = 数据源暂不可用（别让用户干等）
   const pending = (done: boolean) => (
     <p className="py-4 text-center text-sm text-muted-foreground/60">
-      {done ? "暂无数据：可能是非交易时段或数据源暂时不可用，可点「大盘指数」旁的刷新重试" : "加载中…"}
+      {done ? "暂无数据：可能是非交易时段或数据源暂时不可用，可点右上角刷新重试" : "加载中…"}
     </p>
   );
 
@@ -67,24 +92,38 @@ export function DailyReview() {
     api.intelligenceFeed(codes, ["filings", "news", "earnings"], 4).then(setIntelligence).catch(() => setIntelligence(null));
   };
 
+  const refreshMarketOverview = (codes: string[]) => {
+    api.internationalOverview(codes).then((data) => {
+      setInternationalOverview(data);
+      setBenchmarks(data.benchmarks);
+    }).catch(() => {});
+  };
+
   useEffect(() => {
-    loadIndices();
     const codes = loadWatch();
+    loadInternational(codes);
+    loadMarketMood("US");
     refreshWatch(codes);
     refreshIntelligence(codes);
   }, []);
+
+  const selectMarket = (next: MarketFocus) => {
+    setMarketFocus(next);
+    if (next === "CN") loadAShareTools();
+    else loadMarketMood(next);
+  };
 
   const addWatch = () => {
     // 支持一次粘贴多只（逗号 / 空格分隔）；全部无效或重复则清空输入、无副作用。
     const { next, added } = addCodes(watchCodes, watchInput);
     setWatchInput("");
     if (!added) return;
-    setWatchCodes(next); saveWatch(next); refreshWatch(next); refreshIntelligence(next);
+    setWatchCodes(next); saveWatch(next); refreshWatch(next); refreshIntelligence(next); refreshMarketOverview(next);
   };
 
   const removeWatch = (c: string) => {
     const next = watchCodes.filter((x) => x !== c);
-    setWatchCodes(next); saveWatch(next); refreshWatch(next); refreshIntelligence(next);
+    setWatchCodes(next); saveWatch(next); refreshWatch(next); refreshIntelligence(next); refreshMarketOverview(next);
   };
 
   const today = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
@@ -93,11 +132,23 @@ export function DailyReview() {
     ? indices.map((i) => `${i.name} ${i.price}（${i.change_pct > 0 ? "+" : ""}${i.change_pct}%）`).join("；")
     : "（指数数据未取到）";
   const benchmarkSummary = benchmarks?.items.filter((item) => item.available).map((item) =>
-    `${item.name} ${item.price ?? "—"}（${item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct}%`}）`,
+    `${item.name} ${item.price == null ? "—" : fmt(item.price)}（${pctText(item.change_pct)}）`,
   ).join("；") || "（全球基准数据未取到）";
   const intelligenceSummary = intelligence?.items.slice(0, 20).map((item) =>
     `[${item.market} ${item.kind}] ${item.symbol} ${item.title}${item.meta?.surprise_pct != null ? ` surprise ${item.meta.surprise_pct}%` : ""}`,
   ).join("\n") || "（关注股票事件数据未取到）";
+  const sectorGroups = internationalOverview?.sectors;
+  const marketOverviewSummary = internationalOverview ? [
+    `关注列表宽度（非全市场）：总数 ${internationalOverview.watchlist.breadth.total}，上涨 ${internationalOverview.watchlist.breadth.up}，下跌 ${internationalOverview.watchlist.breadth.down}，持平 ${internationalOverview.watchlist.breadth.flat}，未取到 ${internationalOverview.watchlist.breadth.unavailable}`,
+    `关注列表主要波动：${internationalOverview.watchlist.movers.slice(0, 6).map((item) => `${item.symbol} ${item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct.toFixed(2)}%`}`).join("；") || "无"}`,
+    `美国行业 ETF 代理：${internationalOverview.sectors.US.map((item) => `${item.name} ${item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct.toFixed(2)}%`}`).join("；")}`,
+    `欧洲行业 ETF 代理：${internationalOverview.sectors.Europe.map((item) => `${item.name} ${item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct.toFixed(2)}%`}`).join("；")}`,
+  ].join("\n") : "（跨市场概览数据未取到）";
+  const moodSummary = marketMood
+    ? `${marketMood.universe.label}：情绪${marketMood.mood}，上涨 ${marketMood.breadth.up}，下跌 ${marketMood.breadth.down}，` +
+      `站上50日均线 ${marketMood.participation["50"].pct ?? "—"}%，52周新高 ${marketMood.new_highs}，新低 ${marketMood.new_lows}。`
+    : "（所选市场情绪数据未取到）";
+  const selectedBenchmarks = benchmarks?.items.filter((item) => item.region === marketFocus);
 
   const runReview = async () => {
     setReviewErr(null);
@@ -113,6 +164,8 @@ export function DailyReview() {
       : "（未添加关注股票）";
     const prompt =
       `以下是今天美国与欧洲主要基准的客观数据：\n${benchmarkSummary}\n\n` +
+      `以下是所选市场的日线情绪统计：\n${moodSummary}\n\n` +
+      `以下是跨市场概览（关注列表宽度及行业 ETF 代理，不代表全市场宽度）：\n${marketOverviewSummary}\n\n` +
       `以下是用户关注的跨市场股票行情：\n${watchSummary}\n\n` +
       `以下是关注股票的近期文件、新闻与 earnings：\n${intelligenceSummary}\n\n` +
       `以下是 A 股数据（次要参考）：\n${aShareSummary}\n\n` +
@@ -149,34 +202,110 @@ export function DailyReview() {
         subtitle={`${today} · 美国 / 欧洲基准、自选股事件与 AI 复盘一屏看全`}
         actions={
           <AskAiButton
-            context={`今日跨市场数据：${benchmarkSummary}\n关注股票事件：\n${intelligenceSummary}`}
+            context={`今日跨市场基准：${benchmarkSummary}\n所选市场情绪：${moodSummary}\n跨市场概览：\n${marketOverviewSummary}\n关注股票事件：\n${intelligenceSummary}`}
             label="问 AI"
             suggestions={["今天大盘怎么走", "哪些指数领涨领跌", "盘面有什么值得注意"]}
           />
         }
       />
 
-      {/* 1. Global headline benchmarks */}
+      <div className="mb-4 flex items-center justify-between gap-3 border-b border-border/40 pb-4">
+        <div>
+          <p className="text-xs text-muted-foreground">当前市场</p>
+          <p className="mt-0.5 text-sm font-semibold">{marketLabels[marketFocus]}市场复盘</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            aria-label="选择复盘市场"
+            value={marketFocus}
+            onChange={(event) => selectMarket(event.target.value as MarketFocus)}
+            className="h-9 rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary/60"
+          >
+            <option value="US">美国</option>
+            <option value="Europe">欧洲</option>
+            <option value="CN">A股</option>
+          </select>
+          <button onClick={refreshSelectedMarket} className="text-muted-foreground hover:text-primary" title="刷新所选市场">
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* 1. Selected-market headline benchmarks */}
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-muted-foreground">全球主要基准</h3>
-        <button onClick={loadIndices} className="text-muted-foreground hover:text-primary" title="刷新"><RefreshCw className="h-3.5 w-3.5" /></button>
+        <h3 className="text-sm font-semibold text-muted-foreground">{marketFocus === "CN" ? "A股指数" : "主要基准"}</h3>
       </div>
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {!benchmarks
-          ? [1, 2, 3, 4, 5, 6].map((i) => (
+        {marketFocus === "CN" ? (
+          indices.length === 0
+            ? [1, 2, 3, 4].map((i) => <GlassCard key={i} className="p-3"><p className="text-xs text-muted-foreground">{idxErr ? "行情未接通" : "加载中…"}</p><p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p></GlassCard>)
+            : indices.map((item) => <GlassCard key={item.name} className="p-3"><p className="truncate text-xs text-muted-foreground">{item.name}</p><p className={cn("mt-1 font-mono text-lg font-bold", pctColor(item.change_pct))}>{fmt(item.price)}</p><p className={cn("text-xs", pctColor(item.change_pct))}>{pctText(item.change_pct)}</p></GlassCard>)
+        ) : !benchmarks ? (
+          Array.from({ length: marketFocus === "US" ? 2 : 4 }, (_, index) => index).map((i) => (
               <GlassCard key={i} className="p-3">
-                <p className="text-xs text-muted-foreground">{idxErr ? "行情未接通" : "加载中…"}</p>
+                <p className="text-xs text-muted-foreground">加载中…</p>
                 <p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p>
               </GlassCard>
             ))
-          : benchmarks.items.map((item) => (
+        ) : (
+          selectedBenchmarks?.map((item) => (
               <GlassCard key={item.key} className="p-3">
-                <p className="truncate text-xs text-muted-foreground">{item.name} <span className="text-muted-foreground/40">{item.region}</span></p>
-                <p className={cn("mt-1 font-mono text-lg font-bold", pctColor(item.change_pct))}>{item.price ?? "—"}</p>
-                <p className={cn("text-xs", pctColor(item.change_pct))}>{item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct}%`}</p>
+                <p className="truncate text-xs text-muted-foreground">{item.name}</p>
+                <p className={cn("mt-1 font-mono text-lg font-bold", pctColor(item.change_pct))}>{item.price == null ? "—" : fmt(item.price)}</p>
+                <p className={cn("text-xs", pctColor(item.change_pct))}>{pctText(item.change_pct)}</p>
               </GlassCard>
-            ))}
+            ))
+        )}
       </div>
+
+      {marketFocus !== "CN" && (
+        <>
+          <div className="mb-3 flex items-center gap-2">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Gauge className="h-4 w-4" />市场情绪</h3>
+            <span className="text-[11px] text-muted-foreground/50">日线宽度 · 趋势参与度 · 异常成交</span>
+          </div>
+          <div className="mb-6 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+            <GlassCard>
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div><h4 className="text-sm font-semibold">{marketMood?.universe.label || `${marketLabels[marketFocus]}市场篮子`}</h4><p className="mt-1 text-[10px] text-muted-foreground/60">{marketMood?.as_of || "—"} · Yahoo 日线</p></div>
+                <span className={cn("text-sm font-bold", marketMood?.mood === "偏强" ? "text-success" : marketMood?.mood === "偏弱" ? "text-danger" : "text-warning")}>{marketMood?.mood || "—"}</span>
+              </div>
+              {!marketMood ? (
+                <p className="py-5 text-center text-sm text-muted-foreground/60">{moodDone ? "数据源暂时不可用，可刷新重试。" : "正在汇总50只股票的日线数据…"}</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: "上涨 / 下跌", value: `${marketMood.breadth.up} / ${marketMood.breadth.down}` },
+                      { label: "52周新高 / 新低", value: `${marketMood.new_highs} / ${marketMood.new_lows}` },
+                      { label: "异常成交", value: marketMood.unusual_volume },
+                      { label: "有效样本", value: `${marketMood.breadth.available}/${marketMood.breadth.total}` },
+                    ].map((cell) => <div key={cell.label} className="rounded-md bg-muted/25 p-2 text-center"><p className="text-[10px] text-muted-foreground">{cell.label}</p><p className="mt-1 font-mono text-base font-bold">{cell.value}</p></div>)}
+                  </div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    {(["20", "50", "200"] as const).map((window) => {
+                      const item = marketMood.participation[window];
+                      return <div key={window} className="flex items-baseline justify-between border-b border-border/30 pb-1.5 text-xs"><span className="text-muted-foreground">站上{window}日线</span><span className="font-mono font-semibold">{item.pct == null ? "—" : `${item.pct.toFixed(0)}%`}</span></div>;
+                    })}
+                  </div>
+                  <div className="mt-4 grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
+                    {marketMood.movers.slice(0, 6).map((item) => <div key={item.symbol} className="flex items-center justify-between text-xs"><span className="font-mono text-muted-foreground">{item.symbol}</span><span className={cn("font-mono", pctColor(item.change_pct))}>{pctText(item.change_pct)}</span></div>)}
+                  </div>
+                </>
+              )}
+            </GlassCard>
+            <GlassCard>
+              <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold">行业代理表现</h4><span className="text-[10px] text-muted-foreground/60">Yahoo ETF</span></div>
+              {!sectorGroups ? <p className="py-5 text-center text-sm text-muted-foreground/60">行业代理数据加载中。</p> : (
+                <div className="space-y-2">
+                  {sectorGroups[marketFocus].map((sector) => <div key={sector.symbol} className="flex items-center gap-2 text-xs"><span className="w-28 truncate">{sector.name}</span><span className="flex-1 font-mono text-muted-foreground">{sector.symbol}</span><span className={cn("font-mono", pctColor(sector.change_pct))}>{pctText(sector.change_pct)}</span></div>)}
+                </div>
+              )}
+              <p className="mt-4 border-t border-border/30 pt-3 text-[10px] leading-relaxed text-muted-foreground/60">代表篮子用于低成本观察市场宽度，不等同于全市场统计；数据为日线，可能延迟。</p>
+            </GlassCard>
+          </div>
+        </>
+      )}
 
       {/* 2. 关注股票（自选） */}
       <div className="mb-3 flex items-center justify-between">
@@ -282,22 +411,8 @@ export function DailyReview() {
         ) : null}
       </GlassCard>
 
-      <div className="mb-4 mt-2 border-t border-border/50 pt-5">
-        <h2 className="text-base font-bold">A股市场工具</h2>
-        <p className="mt-1 text-xs text-muted-foreground/60">保留原有 A 股指数、情绪、短线榜单与板块资金模块。</p>
-      </div>
-
-      {/* 4. A-share indices */}
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-muted-foreground">A股指数</h3>
-      </div>
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {indices.length === 0
-          ? [1, 2, 3, 4].map((i) => <GlassCard key={i} className="p-3"><p className="text-xs text-muted-foreground">行情未接通</p><p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p></GlassCard>)
-          : indices.map((i) => <GlassCard key={i.name} className="p-3"><p className="truncate text-xs text-muted-foreground">{i.name}</p><p className={cn("mt-1 font-mono text-lg font-bold", pctColor(i.change_pct))}>{i.price}</p><p className={cn("text-xs", pctColor(i.change_pct))}>{i.change_pct > 0 ? "+" : ""}{i.change_pct}%</p></GlassCard>)}
-      </div>
-
-      {/* 5. Market emotion */}
+      {marketFocus === "CN" && <>
+      {/* A-share market tools */}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Gauge className="h-4 w-4" /> 市场情绪</h3>
         {sentiment?.date && <span className="text-[11px] text-muted-foreground/50">{sentiment.date}</span>}
@@ -511,6 +626,7 @@ export function DailyReview() {
           </GlassCard>
         ))}
       </div>
+      </>}
 
       <Disclaimer />
     </div>

@@ -126,6 +126,39 @@ def _payload_empty(value) -> bool:
     return False  # 非空标量
 
 
+def _compact_market_bars(value):
+    """Keep full-period context plus recent observations within the dossier cap."""
+    if not isinstance(value, dict) or not isinstance(value.get("bars"), list):
+        return value
+    bars = [row for row in value["bars"] if isinstance(row, dict)]
+    if not bars:
+        return value
+
+    numeric = lambda item: isinstance(item, (int, float)) and not isinstance(item, bool)
+    closes = [row["close"] for row in bars if numeric(row.get("close"))]
+    highs = [row["high"] for row in bars if numeric(row.get("high"))]
+    lows = [row["low"] for row in bars if numeric(row.get("low"))]
+    volumes = [row["volume"] for row in bars if numeric(row.get("volume"))]
+    period_change_pct = None
+    if len(closes) >= 2 and closes[0] != 0:
+        period_change_pct = round((closes[-1] - closes[0]) / closes[0] * 100, 4)
+    recent = [{key: row.get(key) for key in ("date", "close", "volume")} for row in bars[-15:]]
+    return {
+        "provider_symbol": value.get("provider_symbol"),
+        "range": value.get("range"),
+        "interval": value.get("interval"),
+        "source": value.get("source"),
+        "summary": {
+            "period_start": bars[0].get("date"), "period_end": bars[-1].get("date"),
+            "start_close": closes[0] if closes else None, "end_close": closes[-1] if closes else None,
+            "period_change_pct": period_change_pct,
+            "period_high": max(highs) if highs else None, "period_low": min(lows) if lows else None,
+            "average_volume": round(sum(volumes) / len(volumes)) if volumes else None,
+        },
+        "recent_bars": recent,
+    }
+
+
 def _fetch_section(spec: tuple[str, dict, str, bool, bool], code: str) -> dict:
     """跑一项底稿数据，返回 {title, tool, data, ok}。"""
     name, extra, title, _par, empty_ok = spec
@@ -139,6 +172,8 @@ def _fetch_section(spec: tuple[str, dict, str, bool, bool], code: str) -> dict:
     else:
         args = {"code": code, **extra}
     result = tools.exec_tool(name, args)
+    if name == "query_market_bars" and not (isinstance(result, dict) and result.get("error")):
+        result = _compact_market_bars(result)
 
     if isinstance(result, dict) and result.get("error"):
         return {"title": title, "tool": name, "data": result, "ok": False}

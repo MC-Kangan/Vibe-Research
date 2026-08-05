@@ -186,6 +186,23 @@ def test_european_dossier_reports_missing_fundamentals(monkeypatch):
     assert any("监管文件" in gap for gap in dossier["missing"])
 
 
+def test_market_bar_dossier_keeps_recent_history_and_full_period_summary():
+    bars = [{
+        "date": f"2026-01-{index + 1:02d}", "open": 99 + index, "high": 101 + index,
+        "low": 98 + index, "close": 100 + index, "volume": 1000 + index,
+    } for index in range(30)]
+
+    compact = debate._compact_market_bars({
+        "provider_symbol": "AAPL", "range": "1y", "interval": "1d", "source": "yahoo", "bars": bars,
+    })
+
+    assert compact["summary"]["period_start"] == "2026-01-01"
+    assert compact["summary"]["period_end"] == "2026-01-30"
+    assert compact["summary"]["period_change_pct"] == 29.0
+    assert compact["recent_bars"][0]["date"] == "2026-01-16"
+    assert compact["recent_bars"][-1]["date"] == "2026-01-30"
+
+
 def test_failed_stage_still_emits_terminal_event(monkeypatch):
     """角色生成失败也必须发终态事件。
 

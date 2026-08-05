@@ -1,6 +1,6 @@
 # Market Data Source Registry
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 This is the living registry for VibeResearch market-data providers. Update the status, coverage notes, and change log whenever a source is added, replaced, or removed. A provider being listed here does not mean every endpoint is licensed or enabled.
 
@@ -22,6 +22,7 @@ This is the living registry for VibeResearch market-data providers. Update the s
 | Regulatory filings | Active: Eastmoney announcements | Active: SEC EDGAR submissions and filing links | Gap; filings.xbrl.org is the preferred first candidate |
 | Analyst estimates | Active: existing Eastmoney consensus fields and reports | Partial: current Eastmoney US F10 metrics; long-range consensus remains a gap | Gap; evaluate Finnhub or FMP trial coverage |
 | Debate dossier | Active | Yahoo + Eastmoney US F10 + SEC + optional Finnhub | Yahoo + optional Finnhub; fundamentals and filings remain explicit gaps |
+| Market overview | Active: existing A-share breadth and sector flows | Active: headline benchmarks, watchlist breadth/movers, Yahoo sector ETF proxies | Active: headline benchmarks, watchlist breadth/movers, Yahoo sector ETF proxies |
 
 ## Connected Providers
 
@@ -60,6 +61,14 @@ This is the living registry for VibeResearch market-data providers. Update the s
 - Application module: `backend/market_data/finnhub.py`.
 - Authentication: set `VR_FINNHUB_API_KEY` on the backend. Never place this key in frontend browser storage.
 - Notes: free/trial plan access, quotas, history depth, European ticker syntax, and exchange coverage must be validated. Missing or unauthorized data is surfaced as a provider gap and does not block Yahoo prices.
+
+### Yahoo sector and index snapshots
+
+- Status: **Active** for the first US/European market-overview slice.
+- Application modules: `backend/market_data/benchmarks.py` and `backend/market_data/overview.py`.
+- Headline benchmarks: S&P 500, Nasdaq-100, EURO STOXX 50, STOXX Europe 600, DAX, and SMI.
+- Sector proxies: US Select Sector SPDR ETFs (`XLK`, `XLF`, `XLI`, `XLE`, `XLV`, `XLC`) and Deutsche Börse STOXX Europe 600 sector ETFs such as `EXV1.DE` and `EXV4.DE`.
+- Important limitation: the landing breadth and movers are calculated from the user's watchlist. Sector rows are proxy instruments, not constituent-level breadth or official index sector totals.
 
 ## Evaluated Candidates
 
@@ -127,3 +136,4 @@ cd backend && .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8900
 
 - **2026-08-04**: Created registry. Connected SEC EDGAR filings/companyfacts and optional Finnhub trial news/earnings. Retained Yahoo for US/European prices and Eastmoney US F10 for existing key metrics.
 - **2026-08-05**: Added Yahoo-backed US/European headline benchmarks, normalized cross-market watchlist intelligence, and moved A-share market tools below the primary global review.
+- **2026-08-05**: Added the first US/European market overview: benchmark snapshots, watchlist-derived breadth and movers, and Yahoo sector proxies. Full-market breadth and normalized constituent sector data remain follow-up work.
