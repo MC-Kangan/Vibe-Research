@@ -129,6 +129,33 @@ export interface NewsItem {
 export interface IndexQuote {
   name: string; price: number; change_pct: number; change_amt: number;
 }
+export interface BenchmarkSnapshot {
+  key: string; symbol: string; name: string; region: "US" | "Europe";
+  price: number | null; previous_close: number | null; change_pct: number | null;
+  currency: string | null; observed_at: string | null; delay_seconds: number | null;
+  source: string; available: boolean;
+}
+export interface BenchmarkData {
+  items: BenchmarkSnapshot[];
+  gaps: { key: string; symbol: string; message: string }[];
+  fetched_at: string;
+}
+export type IntelligenceKind = "filings" | "news" | "earnings";
+export interface IntelligenceItem {
+  symbol: string; market: "CN" | "US" | "EU"; kind: IntelligenceKind;
+  title: string; summary: string | null; published_at: string; source: string;
+  url: string | null; meta: Record<string, string | number | null>;
+}
+export interface IntelligenceGap {
+  symbol: string; kind: IntelligenceKind; reason: string; message: string;
+}
+export interface IntelligenceFeed {
+  symbols: string[]; kinds: IntelligenceKind[]; items: IntelligenceItem[];
+  gaps: IntelligenceGap[]; fetched_at: string;
+}
+export interface DataSourceStatus {
+  [key: string]: { configured: boolean; coverage: string };
+}
 
 export interface MarketSentiment {
   up: number; down: number; flat: number; zt: number; zt_real: number; dt: number; dt_real: number;
@@ -271,6 +298,27 @@ export interface MarketHistoricalSeries {
   provider_symbol: string; range: string; interval: string; source: string;
   fetched_at: string; bars: MarketHistoricalBar[];
 }
+export interface MarketNewsItem {
+  headline: string | null; summary: string | null; source: string | null;
+  published_at: number | null; url: string | null; category: string | null;
+}
+export interface MarketNews { symbol: string; source: string; items: MarketNewsItem[] }
+export interface MarketEarningsItem {
+  period: string | null; quarter: number | null; year: number | null;
+  actual: number | null; estimate: number | null; surprise: number | null; surprise_pct: number | null;
+}
+export interface MarketEarnings { symbol: string; source: string; items: MarketEarningsItem[] }
+export interface SecFiling {
+  filingDate: string | null; reportDate: string | null; acceptanceDateTime: string | null;
+  form: string | null; primaryDocDescription: string | null; accession_number: string;
+  primary_document: string; url: string | null;
+}
+export interface SecFilings { symbol: string; cik: string; company: string | null; source: string; items: SecFiling[] }
+export interface SecFactValue {
+  label: string | null; val: number | null; unit: string; fy?: number; fp?: string;
+  form?: string; filed?: string; start?: string; end?: string;
+}
+export interface SecFacts { symbol: string; cik: string; company: string | null; source: string; facts: Record<string, SecFactValue> }
 
 export const api = {
   health: () => get<{ ok: boolean }>("/health"),
@@ -279,12 +327,22 @@ export const api = {
   emotion: () => get<ShortTermEmotion>("/market/emotion"),
   turnoverTop: () => get<TurnoverTop>("/market/turnover-top"),
   globalIndices: () => get<GlobalIndex[]>("/global/indices"),
+  benchmarks: () => get<BenchmarkData>("/market-data/benchmarks"),
+  dataSourceStatus: () => get<DataSourceStatus>("/data-sources/status"),
+  intelligenceFeed: (symbols: string[], kinds: IntelligenceKind[] = ["filings", "news", "earnings"], limitPerSymbol = 5) =>
+    request<IntelligenceFeed>("/intelligence/feed", "POST", { symbols, kinds, limit_per_symbol: limitPerSymbol }),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
   hkCashflow: (symbol: string) => get<HkCashflow>(`/global/hk/cashflow?symbol=${encodeURIComponent(symbol)}`),
   marketSnapshot: (symbol: string) => get<MarketSnapshot>(`/market-data/snapshot?symbol=${encodeURIComponent(symbol)}`),
   marketBars: (symbol: string, range = "1y", interval = "1d") => get<MarketHistoricalSeries>(
     `/market-data/bars?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`,
   ),
+  marketNews: (symbol: string, days = 30) => get<MarketNews>(
+    `/market-data/news?symbol=${encodeURIComponent(symbol)}&days=${days}`,
+  ),
+  marketEarnings: (symbol: string) => get<MarketEarnings>(`/market-data/earnings?symbol=${encodeURIComponent(symbol)}`),
+  marketFilings: (symbol: string) => get<SecFilings>(`/market-data/filings?symbol=${encodeURIComponent(symbol)}`),
+  marketSecFacts: (symbol: string) => get<SecFacts>(`/market-data/sec-facts?symbol=${encodeURIComponent(symbol)}`),
   radar: () => get<RadarData>("/radar"),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   portfolio: () => get<PortfolioData>("/portfolio"),

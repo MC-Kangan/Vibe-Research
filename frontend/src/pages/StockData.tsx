@@ -14,6 +14,7 @@ import {
   type Financials, type Announcement, type MarginRow, type BlockTradeRow, type HolderRow,
   type DividendRow, type FundFlowRow, type DragonTiger, type Lockup, type Blocks, type HotConcept, type QaRow,
   type GlobalStock, type HkCashflow, type MarketSnapshot, type MarketHistoricalSeries,
+  type MarketNews, type MarketEarnings, type SecFilings, type SecFacts,
 } from "@/lib/api";
 import { isUSSymbol, stockDataRoute } from "@/lib/market-symbols";
 import { cn } from "@/lib/utils";
@@ -24,9 +25,9 @@ const yi = (v: number) => `${(v / 1e8).toFixed(2)} 亿`;
 const fmt = (v: number | null | undefined, suffix = "") =>
   v === null || v === undefined ? "—" : `${v}${suffix}`;
 
-// A股红涨绿跌（中国平台看美港股也用此惯例）
+// International convention: green up, red down.
 const pctColor = (p: number | null | undefined) =>
-  p != null && p > 0 ? "text-danger" : p != null && p < 0 ? "text-success" : "text-muted-foreground";
+  p != null && p > 0 ? "text-success" : p != null && p < 0 ? "text-danger" : "text-muted-foreground";
 const pctStr = (p: number | null | undefined) => (p == null ? "—" : `${p > 0 ? "+" : ""}${p}%`);
 // 美/港股金额（原生币种）
 const curOf = (market: string) => (market === "HK" ? "港元" : market === "KR" ? "韩元" : "美元");
@@ -105,6 +106,11 @@ export function StockData() {
   const [cashflow, setCashflow] = useState<HkCashflow | null>(null);  // 港股现金流量表（仅港股）
   const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
   const [marketHistory, setMarketHistory] = useState<MarketHistoricalSeries | null>(null);
+  const [marketNews, setMarketNews] = useState<MarketNews | null>(null);
+  const [marketEarnings, setMarketEarnings] = useState<MarketEarnings | null>(null);
+  const [marketFilings, setMarketFilings] = useState<SecFilings | null>(null);
+  const [marketSecFacts, setMarketSecFacts] = useState<SecFacts | null>(null);
+  const [marketSourceGaps, setMarketSourceGaps] = useState<string[]>([]);
   const runIdRef = useRef(0);
 
   const run = async () => {
@@ -114,11 +120,23 @@ export function StockData() {
     setLoading(true); setErr(null); setDepNote(null); setVal(null); setReports([]); setNews([]); setPctl(null); setFin(null); setAnns([]);
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
     setGStock(null); setCashflow(null); setMarketSnapshot(null); setMarketHistory(null);
+    setMarketNews(null); setMarketEarnings(null); setMarketFilings(null); setMarketSecFacts(null); setMarketSourceGaps([]);
 
     const route = stockDataRoute(c);
 
     // 显式欧洲交易所后缀走新的规范化数据路径；不改变现有 A 股和 global fallback。
     if (route === "market") {
+      const noteGap = (label: string) => (error: unknown) => {
+        if (rid !== runIdRef.current) return;
+        const detail = error instanceof ApiError ? error.message : "数据源当前不可达";
+        setMarketSourceGaps((current) => [...current, `${label}：${detail}`]);
+      };
+      api.marketNews(c).then((data) => { if (rid === runIdRef.current) setMarketNews(data); }).catch(noteGap("新闻"));
+      api.marketEarnings(c).then((data) => { if (rid === runIdRef.current) setMarketEarnings(data); }).catch(noteGap("Earnings"));
+      if (isUSSymbol(c)) {
+        api.marketFilings(c).then((data) => { if (rid === runIdRef.current) setMarketFilings(data); }).catch(noteGap("SEC 文件"));
+        api.marketSecFacts(c).then((data) => { if (rid === runIdRef.current) setMarketSecFacts(data); }).catch(noteGap("SEC 基本面"));
+      }
       try {
         const [snapshot, history, supplemental] = await Promise.all([
           api.marketSnapshot(c),
@@ -275,7 +293,15 @@ export function StockData() {
       )}
 
       {marketSnapshot && marketHistory && (
-        <MarketStockView snapshot={marketSnapshot} history={marketHistory} />
+        <MarketStockView
+          snapshot={marketSnapshot}
+          history={marketHistory}
+          news={marketNews}
+          earnings={marketEarnings}
+          filings={marketFilings}
+          secFacts={marketSecFacts}
+          sourceGaps={marketSourceGaps}
+        />
       )}
 
       {/* 美股 / 港股视图（global-stock-data，东财域内源） */}

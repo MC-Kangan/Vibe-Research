@@ -118,6 +118,19 @@ TOOLS: list[dict] = [
        {"symbol": {"type": "string", "description": "美股或带交易所后缀的欧洲代码"},
         "range": {"type": "string", "enum": ["1mo", "3mo", "6mo", "1y", "2y"], "description": "历史区间，默认 1y"}},
        ["symbol"]),
+    _t("query_market_news",
+       "查美股或欧洲股票的公司新闻。使用 Finnhub trial；需后端设置 VR_FINNHUB_API_KEY，覆盖率需逐交易所验证。",
+       {"symbol": {"type": "string", "description": "美股或带交易所后缀的欧洲代码"},
+        "days": {"type": "integer", "description": "回溯天数，默认 30，最大 365"}}, ["symbol"]),
+    _t("query_market_earnings",
+       "查美股或欧洲股票的历史 EPS 实际值、预期值和 surprise。使用 Finnhub trial，覆盖率需验证。",
+       {"symbol": {"type": "string", "description": "美股或带交易所后缀的欧洲代码"}}, ["symbol"]),
+    _t("query_us_filings",
+       "查美国上市公司的 SEC EDGAR 监管文件（10-K、10-Q、8-K 等）及原文链接。仅美股。",
+       {"symbol": {"type": "string", "description": "美股代码，如 AAPL"}}, ["symbol"]),
+    _t("query_us_sec_facts",
+       "查美国上市公司 SEC XBRL companyfacts 中的最新营收、净利、EPS、资产负债和经营现金流。仅美股。",
+       {"symbol": {"type": "string", "description": "美股代码，如 AAPL"}}, ["symbol"]),
     _t("query_hk_cashflow",
        "查港股现金流量表：经营/投资/筹资活动现金流净额、现金及等价物净增加、期初/期末现金，多期、附同比。仅港股，代码用数字如 00700。",
        {"symbol": {"type": "string", "description": "港股代码，如 00700"}},
@@ -379,6 +392,12 @@ _HANDLERS = {
     "query_global_stock": lambda a: gstock.us_hk_stock(str(a.get("symbol", ""))) or {"error": "未找到该美股/港股/韩股代码"},
     "query_market_snapshot": lambda a: asdict(market_data.get_snapshot(str(a.get("symbol", "")))),
     "query_market_bars": lambda a: asdict(market_data.get_bars(str(a.get("symbol", "")), str(a.get("range") or "1y"), "1d")),
+    "query_market_news": lambda a: market_data.get_company_news(
+        str(a.get("symbol", "")), max(1, min(int(a.get("days") or 30), 365)), 15
+    ),
+    "query_market_earnings": lambda a: market_data.get_earnings(str(a.get("symbol", "")), 12),
+    "query_us_filings": lambda a: market_data.get_filings(str(a.get("symbol", "")), 15),
+    "query_us_sec_facts": lambda a: market_data.get_company_facts(str(a.get("symbol", ""))),
     "query_hk_cashflow": lambda a: gstock.hk_cashflow(str(a.get("symbol", ""))) or {"error": "未找到该港股现金流（仅港股支持）"},
 }
 

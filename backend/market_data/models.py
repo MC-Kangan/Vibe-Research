@@ -133,3 +133,7 @@ class ProviderError(MarketDataError):
 
 class ProviderTimeoutError(ProviderError):
     pass
+
+
+class ProviderConfigurationError(ProviderError):
+    """An optional provider is available but has not been configured."""

@@ -9,9 +9,9 @@ import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { cn } from "@/lib/utils";
 import { isAShareSymbol } from "@/lib/market-symbols";
 
-// A 股红涨绿跌（与整个看板一致）。
+// International convention: green up, red down.
 const color = (v: number | null | undefined) =>
-  v == null ? "text-muted-foreground" : v > 0 ? "text-danger" : v < 0 ? "text-success" : "text-muted-foreground";
+  v == null ? "text-muted-foreground" : v > 0 ? "text-success" : v < 0 ? "text-danger" : "text-muted-foreground";
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`);
 
 const LIVE_KEY = "vr-watchlist-live";

@@ -103,7 +103,7 @@ const argStr = (a: Record<string, unknown>): string => {
 interface ToolUse { name: string; arg: string }
 
 // 「问 AI」入口 —— 把当前分栏内容作为上下文，调用户自己配置的模型；
-// AI 可自行调 A股数据工具作答。结论由用户模型给出，本产品不校准、不负责。
+// AI 可自行调跨市场数据工具作答。结论由用户模型给出，本产品不校准、不负责。
 export function AskAiButton({ context, suggestions = [], label = "问 AI", scopeKey }: Props) {
   const { pathname } = useLocation();
   const chatKey = CHAT_KEY_PREFIX + pathname + (scopeKey ? `#${scopeKey}` : "");
@@ -306,7 +306,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI", scope
                 <div ref={scrollRef} className="flex-1 space-y-3 overflow-auto p-4 text-sm">
                   {msgs.length === 0 && (
                     <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
-                      AI 可基于本页上下文、并自行调取 A股行情/估值/研报数据作答。结论由你的模型给出，
+                      AI 可基于本页上下文、并自行调取美股、欧洲或 A 股数据工具作答。结论由你的模型给出，
                       <b className="text-foreground">不构成投资建议</b>。
                     </div>
                   )}

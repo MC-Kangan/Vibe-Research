@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { KeyRound, Sparkles, ShieldCheck, Check, Trash2, Terminal } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { toast } from "sonner";
 import { loadLlm, saveLlm, clearLlm } from "@/lib/llm";
-import { loadAccessKey, saveAccessKey } from "@/lib/api";
+import { api, loadAccessKey, saveAccessKey, type DataSourceStatus } from "@/lib/api";
 import { subscriptionModels, apiModels, PROVIDER_BASE, isCliProvider, aiModels, type ProviderId } from "@/lib/ai-models";
 
 export function Settings() {
@@ -22,6 +22,9 @@ export function Settings() {
   const [apiKey, setApiKey] = useState(existing && !existingIsCli ? existing.apiKey : "");
   // 后端访问密钥（对应部署时的 VR_API_KEY）；本机自用不设鉴权时留空
   const [accessKey, setAccessKey] = useState(loadAccessKey());
+  const [dataSources, setDataSources] = useState<DataSourceStatus | null>(null);
+
+  useEffect(() => { api.dataSourceStatus().then(setDataSources).catch(() => setDataSources(null)); }, []);
 
   const providerOf = (id: string): ProviderId => aiModels.find((m) => m.id === id)?.provider ?? "openai-compatible";
 
@@ -181,6 +184,24 @@ export function Settings() {
             </div>
           </div>
         )}
+      </GlassCard>
+
+      <GlassCard className="mt-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+          <ShieldCheck className="h-4 w-4 text-primary" /> 市场数据源状态
+        </h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          市场数据 key 保存在后端环境变量中，不会进入浏览器或 AI 请求。修改环境变量后请重启 backend。
+        </p>
+        <div className="space-y-2">
+          {dataSources ? Object.entries(dataSources).map(([key, value]) => (
+            <div key={key} className="flex items-center gap-2 border-b border-border/30 pb-2 text-xs last:border-0">
+              <span className={value.configured ? "text-success" : "text-warning"}>{value.configured ? "已配置" : "待配置"}</span>
+              <span className="font-medium">{key}</span>
+              <span className="ml-auto text-right text-muted-foreground">{value.coverage}</span>
+            </div>
+          )) : <p className="text-xs text-muted-foreground/60">数据源状态暂不可用。</p>}
+        </div>
       </GlassCard>
 
       {/* 后端访问密钥：仅当后端部署时设置了 VR_API_KEY（公网防蹭用）才需要填 */}

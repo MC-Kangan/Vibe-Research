@@ -27,7 +27,7 @@
     --border: 210 30% 22%;             /* surface-3 边框 */
     --radius: 1rem;
 
-    /* 语义色（涨跌配色由页面按 A股红涨绿跌自行选用 success/danger） */
+    /* 语义色：success=positive/green, danger=negative/red. */
     --success: 145 62% 47%;
     --danger: 0 74% 60%;
     --warning: 38 92% 55%;

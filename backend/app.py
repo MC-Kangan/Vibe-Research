@@ -24,6 +24,7 @@ import cli_runtime
 import debate as debate_layer
 import gstock
 import market_data
+import market_intelligence
 import newsradar
 import portfolio as pf
 import market
@@ -360,6 +361,43 @@ def global_indices():
         raise HTTPException(502, f"全球指数异常：{e}") from e
 
 
+@app.get("/api/market-data/benchmarks")
+def market_data_benchmarks():
+    """US/European headline benchmark snapshots for the primary landing view."""
+    return {"data": market_data.get_benchmarks()}
+
+
+@app.get("/api/data-sources/status")
+def data_sources_status():
+    """Configuration status only; never returns provider credentials."""
+    return {"data": {
+        "yahoo": {"configured": True, "coverage": "US/Europe quotes and daily history"},
+        "sec_edgar": {"configured": bool(os.environ.get("VR_SEC_USER_AGENT", "").strip()), "coverage": "US filings and selected XBRL facts"},
+        "finnhub": {"configured": bool(os.environ.get("VR_FINNHUB_API_KEY", "").strip()), "coverage": "US/Europe company news and earnings trial"},
+        "europe_filings": {"configured": False, "coverage": "European regulatory filings not yet connected"},
+    }}
+
+
+class IntelligenceFeedReq(BaseModel):
+    symbols: list[str]
+    kinds: list[str] = ["filings", "news", "earnings"]
+    limit_per_symbol: int = 5
+
+
+@app.post("/api/intelligence/feed")
+def intelligence_feed(req: IntelligenceFeedReq):
+    """Normalized watchlist filings/news/earnings feed across supported markets."""
+    if not req.symbols or len(req.symbols) > 30:
+        raise HTTPException(400, "symbols 必须包含 1-30 个股票代码")
+    if not any(kind in {"filings", "news", "earnings"} for kind in req.kinds):
+        raise HTTPException(400, "kinds 必须包含 filings、news 或 earnings")
+    try:
+        symbols = [_validate_stock_symbol(symbol) for symbol in req.symbols]
+    except HTTPException:
+        raise
+    return {"data": market_intelligence.collect(symbols, req.kinds, req.limit_per_symbol)}
+
+
 @app.get("/api/global/stock")
 def global_stock(symbol: str = Query(..., min_length=1, max_length=16)):
     """美股 / 港股个股聚合：行情 + 关键财务指标（东财域内源）。symbol 如 AAPL / BABA / 00700。"""
@@ -394,6 +432,8 @@ def _market_data_http_error(exc: market_data.MarketDataError) -> HTTPException:
         return HTTPException(400, str(exc))
     if isinstance(exc, market_data.InstrumentNotFoundError):
         return HTTPException(404, str(exc))
+    if isinstance(exc, market_data.ProviderConfigurationError):
+        return HTTPException(503, str(exc))
     if isinstance(exc, market_data.ProviderTimeoutError):
         return HTTPException(504, str(exc))
     return HTTPException(502, str(exc))
@@ -417,6 +457,45 @@ def market_data_bars(
     """美股/欧洲股票日线 OHLCV；价格已归一为交易币种主单位。"""
     try:
         return {"data": market_data.get_bars(symbol, range_, interval)}
+    except market_data.MarketDataError as exc:
+        raise _market_data_http_error(exc) from exc
+
+
+@app.get("/api/market-data/news")
+def market_data_news(
+    symbol: str = Query(..., min_length=1, max_length=24),
+    days: int = Query(30, ge=1, le=365),
+):
+    """Finnhub company news; optional and enabled with VR_FINNHUB_API_KEY."""
+    try:
+        return {"data": market_data.get_company_news(symbol, days=days)}
+    except market_data.MarketDataError as exc:
+        raise _market_data_http_error(exc) from exc
+
+
+@app.get("/api/market-data/earnings")
+def market_data_earnings(symbol: str = Query(..., min_length=1, max_length=24)):
+    """Finnhub historical earnings and estimates for coverage validation."""
+    try:
+        return {"data": market_data.get_earnings(symbol)}
+    except market_data.MarketDataError as exc:
+        raise _market_data_http_error(exc) from exc
+
+
+@app.get("/api/market-data/filings")
+def market_data_filings(symbol: str = Query(..., min_length=1, max_length=24)):
+    """Authoritative SEC EDGAR filings for US issuers."""
+    try:
+        return {"data": market_data.get_filings(symbol)}
+    except market_data.MarketDataError as exc:
+        raise _market_data_http_error(exc) from exc
+
+
+@app.get("/api/market-data/sec-facts")
+def market_data_sec_facts(symbol: str = Query(..., min_length=1, max_length=24)):
+    """Selected latest company facts from SEC XBRL companyfacts."""
+    try:
+        return {"data": market_data.get_company_facts(symbol)}
     except market_data.MarketDataError as exc:
         raise _market_data_http_error(exc) from exc
 

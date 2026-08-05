@@ -1,6 +1,8 @@
-import { BarChart3, Clock3, Database } from "lucide-react";
+import { BarChart3, Clock3, Database, FileText, Newspaper, TrendingUp } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
-import type { MarketHistoricalSeries, MarketSnapshot } from "@/lib/api";
+import type {
+  MarketEarnings, MarketHistoricalSeries, MarketNews, MarketSnapshot, SecFacts, SecFilings,
+} from "@/lib/api";
 import { formatMarketPrice } from "@/lib/market-symbols";
 import { cn } from "@/lib/utils";
 import { PriceHistoryChart } from "./PriceHistoryChart";
@@ -8,12 +10,17 @@ import { PriceHistoryChart } from "./PriceHistoryChart";
 interface Props {
   snapshot: MarketSnapshot;
   history: MarketHistoricalSeries;
+  news: MarketNews | null;
+  earnings: MarketEarnings | null;
+  filings: SecFilings | null;
+  secFacts: SecFacts | null;
+  sourceGaps: string[];
 }
 
 const pct = (value: number | null) => value == null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 const pctColor = (value: number | null) => value != null && value > 0
-  ? "text-danger"
-  : value != null && value < 0 ? "text-success" : "text-muted-foreground";
+  ? "text-success"
+  : value != null && value < 0 ? "text-danger" : "text-muted-foreground";
 
 function timestamp(value: string | null): string {
   if (!value) return "未知";
@@ -21,7 +28,19 @@ function timestamp(value: string | null): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("zh-CN");
 }
 
-export function MarketStockView({ snapshot, history }: Props) {
+const factLabels: Record<string, string> = {
+  revenue: "营收", net_income: "净利润", diluted_eps: "摊薄 EPS", assets: "总资产",
+  liabilities: "总负债", cash: "现金及等价物", operating_cash_flow: "经营现金流",
+};
+
+const factValue = (value: number | null, unit: string) => {
+  if (value == null) return "—";
+  if (unit === "USD" && Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)} bn USD`;
+  if (unit === "USD" && Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(2)} mn USD`;
+  return `${value.toLocaleString()} ${unit}`;
+};
+
+export function MarketStockView({ snapshot, history, news, earnings, filings, secFacts, sourceGaps }: Props) {
   const { instrument, quote } = snapshot;
   const fields = [
     { label: "现价", value: formatMarketPrice(quote.price, quote.currency), cls: pctColor(quote.change_pct) },
@@ -67,8 +86,81 @@ export function MarketStockView({ snapshot, history }: Props) {
         <PriceHistoryChart bars={history.bars} currency={quote.currency} />
       </GlassCard>
 
+      {secFacts && Object.keys(secFacts.facts).length > 0 && (
+        <GlassCard className="mb-4">
+          <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            <Database className="h-4 w-4 text-primary" /> SEC 最新公司事实
+          </h3>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {Object.entries(secFacts.facts).map(([key, fact]) => (
+              <div key={key} className="rounded-lg bg-muted/30 p-3">
+                <p className="text-xs text-muted-foreground">{factLabels[key] || fact.label || key}</p>
+                <p className="mt-0.5 font-mono text-sm font-bold">{factValue(fact.val, fact.unit)}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">{fact.end || "—"} · {fact.form || "—"}</p>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      {earnings && earnings.items.length > 0 && (
+        <GlassCard className="mb-4">
+          <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            <TrendingUp className="h-4 w-4 text-primary" /> Earnings 实际值与预期
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-left text-xs">
+              <thead className="text-muted-foreground"><tr><th className="pb-2">报告期</th><th>实际 EPS</th><th>预期 EPS</th><th>Surprise</th></tr></thead>
+              <tbody>{earnings.items.slice(0, 8).map((item, index) => (
+                <tr key={`${item.period}-${index}`} className="border-t border-border/40">
+                  <td className="py-2 font-mono">{item.period || `${item.year ?? "—"} Q${item.quarter ?? "—"}`}</td>
+                  <td className="font-mono">{item.actual ?? "—"}</td><td className="font-mono">{item.estimate ?? "—"}</td>
+                  <td className={cn("font-mono", pctColor(item.surprise_pct))}>{pct(item.surprise_pct)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </GlassCard>
+      )}
+
+      {filings && filings.items.length > 0 && (
+        <GlassCard className="mb-4">
+          <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            <FileText className="h-4 w-4 text-primary" /> SEC 监管文件
+          </h3>
+          <div className="divide-y divide-border/40">
+            {filings.items.slice(0, 10).map((item) => (
+              <div key={item.accession_number} className="flex items-start gap-3 py-2 text-xs">
+                <span className="w-14 shrink-0 font-mono font-semibold text-primary">{item.form || "—"}</span>
+                <div className="min-w-0 flex-1">
+                  {item.url ? <a href={item.url} target="_blank" rel="noreferrer" className="font-medium hover:text-primary">{item.primaryDocDescription || item.primary_document}</a> : <span>{item.primaryDocDescription || item.primary_document}</span>}
+                  <p className="text-[10px] text-muted-foreground">提交 {item.filingDate || "—"} · 报告期 {item.reportDate || "—"}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      {news && news.items.length > 0 && (
+        <GlassCard className="mb-4">
+          <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            <Newspaper className="h-4 w-4 text-primary" /> 公司新闻
+          </h3>
+          <div className="divide-y divide-border/40">
+            {news.items.slice(0, 10).map((item, index) => (
+              <div key={`${item.url}-${index}`} className="py-2 text-xs">
+                {item.url ? <a href={item.url} target="_blank" rel="noreferrer" className="font-medium hover:text-primary">{item.headline || "Untitled"}</a> : <span className="font-medium">{item.headline || "Untitled"}</span>}
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{item.source || "Finnhub"}{item.published_at ? ` · ${new Date(item.published_at * 1000).toLocaleString("zh-CN")}` : ""}</p>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
       <p className="text-xs text-muted-foreground/60">
-        美股/欧洲行情来自 Yahoo chart 数据源，仅限个人研究使用 · 公告、监管文件和个股新闻源尚未接入；缺失项不会由 AI 猜测。
+        行情来自 Yahoo chart；SEC 数据仅适用于美国申报公司；新闻与 earnings 使用 Finnhub trial，欧洲覆盖仍在验证。
+        {sourceGaps.length > 0 && <> 本次缺口：{sourceGaps.join("；")}。</>}
       </p>
     </>
   );

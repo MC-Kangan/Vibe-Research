@@ -18,7 +18,7 @@ interface StageBox {
 }
 
 // 多方用品牌橙、空方用蓝灰、主持用中性——刻意不用红绿，
-// 免得和 A 股「红涨绿跌」撞车被读成涨跌信号。
+// 避免把辩论角色误读成涨跌信号。
 const STAGE_TONE: Record<DebateStage, string> = {
   bull: "border-primary/50 bg-primary/[0.06]",
   bull_rebut: "border-primary/30 bg-primary/[0.03]",

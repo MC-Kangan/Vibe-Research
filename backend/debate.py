@@ -56,22 +56,32 @@ _MARKET_DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
     ("query_market_bars", {"range": "1y"}, "近一年日线价格与成交量", True, False),
 ]
 _US_FUNDAMENTAL_SPEC = ("query_global_stock", {}, "关键财务指标（现有海外源）", True, False)
+_MARKET_EVENT_SPEC: list[tuple[str, dict, str, bool, bool]] = [
+    ("query_market_news", {"days": 30}, "近期公司新闻（Finnhub trial）", True, True),
+    ("query_market_earnings", {}, "历史盈利与预期差（Finnhub trial）", True, True),
+]
+_US_SEC_SPEC: list[tuple[str, dict, str, bool, bool]] = [
+    ("query_us_sec_facts", {}, "SEC 最新 XBRL 公司事实", True, False),
+    ("query_us_filings", {}, "SEC 近期监管文件", True, True),
+]
 
 
 def _dossier_spec(symbol: str) -> list[tuple[str, dict, str, bool, bool]]:
     if symbol.isdigit() and len(symbol) == 6:
         return _DOSSIER_SPEC
     resolved = market_data.resolve_symbol(symbol)
-    return [*_MARKET_DOSSIER_SPEC, _US_FUNDAMENTAL_SPEC] if resolved.exchange.country == "US" else list(_MARKET_DOSSIER_SPEC)
+    if resolved.exchange.country == "US":
+        return [*_MARKET_DOSSIER_SPEC, _US_FUNDAMENTAL_SPEC, *_US_SEC_SPEC, *_MARKET_EVENT_SPEC]
+    return [*_MARKET_DOSSIER_SPEC, *_MARKET_EVENT_SPEC]
 
 
 def _known_market_gaps(symbol: str) -> list[str]:
     if symbol.isdigit() and len(symbol) == 6:
         return []
     resolved = market_data.resolve_symbol(symbol)
-    common = ["公司公告/监管文件（数据源未接入）", "个股新闻（数据源未接入）", "分析师一致预期（数据源未接入）"]
+    common = ["分析师长期一致预期（数据源未接入）"]
     if resolved.exchange.country != "US":
-        common.insert(0, "财务与估值指标（欧洲数据源未接入）")
+        common[:0] = ["财务与估值指标（欧洲数据源未接入）", "公司公告/监管文件（欧洲统一源未接入）"]
     return common
 
 _SECTION_CAP = 1800  # 单个小节注入上限，防止某项数据把整份底稿撑爆
@@ -121,7 +131,10 @@ def _fetch_section(spec: tuple[str, dict, str, bool, bool], code: str) -> dict:
     name, extra, title, _par, empty_ok = spec
     if name == "query_quote":
         args = {"codes": [code]}
-    elif name in {"query_market_snapshot", "query_market_bars", "query_global_stock"}:
+    elif name in {
+        "query_market_snapshot", "query_market_bars", "query_global_stock",
+        "query_market_news", "query_market_earnings", "query_us_filings", "query_us_sec_facts",
+    }:
         args = {"symbol": code, **extra}
     else:
         args = {"code": code, **extra}

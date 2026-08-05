@@ -166,21 +166,24 @@ def test_dossier_preserves_spec_order(monkeypatch):
     assert [s["tool"] for s in d["sections"]] == [s[0] for s in debate._DOSSIER_SPEC]
 
 
-def test_us_dossier_uses_market_data_and_names_known_gaps(monkeypatch):
+def test_us_dossier_uses_market_data_sec_and_trial_sources(monkeypatch):
     monkeypatch.setattr(tools, "exec_tool", lambda name, args: {"v": name, "symbol": args.get("symbol")})
     dossier = debate.build_dossier("AAPL")
     assert [section["tool"] for section in dossier["sections"]] == [
         "query_market_snapshot", "query_market_bars", "query_global_stock",
+        "query_us_sec_facts", "query_us_filings", "query_market_news", "query_market_earnings",
     ]
-    assert any("监管文件" in gap for gap in dossier["missing"])
-    assert any("新闻" in gap for gap in dossier["missing"])
+    assert any("长期一致预期" in gap for gap in dossier["missing"])
 
 
 def test_european_dossier_reports_missing_fundamentals(monkeypatch):
     monkeypatch.setattr(tools, "exec_tool", lambda name, args: {"v": name})
     dossier = debate.build_dossier("SAP.DE")
-    assert [section["tool"] for section in dossier["sections"]] == ["query_market_snapshot", "query_market_bars"]
+    assert [section["tool"] for section in dossier["sections"]] == [
+        "query_market_snapshot", "query_market_bars", "query_market_news", "query_market_earnings",
+    ]
     assert any("财务与估值" in gap for gap in dossier["missing"])
+    assert any("监管文件" in gap for gap in dossier["missing"])
 
 
 def test_failed_stage_still_emits_terminal_event(monkeypatch):

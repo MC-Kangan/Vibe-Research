@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { TrendingUp, FileText, Newspaper, Rss, RefreshCw, Loader2, ExternalLink, AlertCircle, Sparkles, Lightbulb, Star } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -7,16 +7,16 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
-import { api, ApiError, type RadarData, type Industry, type Announcement, type NewsItem } from "@/lib/api";
+import { api, ApiError, type RadarData, type Industry, type IntelligenceItem, type IntelligenceKind } from "@/lib/api";
 import { loadWatch } from "@/lib/watchlist";
-import { isAShareSymbol } from "@/lib/market-symbols";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { key: "events", label: "事件概率", icon: TrendingUp, integrated: false, desc: "全球宏观预期概率（公开数据、免登录只读），后续接入" },
-  { key: "filings", label: "A股公告", icon: FileText, integrated: false, desc: "汇总关注列表里各个股的近期公告（东财公开披露）" },
-  { key: "news", label: "公开新闻", icon: Newspaper, integrated: false, desc: "汇总关注列表里各个股的近期新闻（公开源）" },
+  { key: "filings", label: "监管文件", icon: FileText, integrated: true, desc: "汇总关注列表中可用的美国 SEC、A股公告与欧洲文件缺口" },
+  { key: "news", label: "公司新闻", icon: Newspaper, integrated: true, desc: "汇总关注列表中可用的公司新闻" },
+  { key: "earnings", label: "Earnings", icon: TrendingUp, integrated: true, desc: "汇总关注列表中可用的 earnings 实际值、预期值与 surprise" },
   { key: "investment-news", label: "Investment News", icon: Rss, integrated: true, desc: "12 赛道全球公开 RSS 资讯（集成自 investment-news 仓库）" },
 ];
 
@@ -183,66 +183,29 @@ function InvestmentNewsPanel() {
 
 // 关注股公告 / 新闻聚合：从本地关注列表取代码，复用个股接口批量拉取、按时间倒序合并。
 // 只做公开信息聚合，标的均为用户自己关注列表里的，不预置、不推荐。
-interface FeedRow { code: string; name: string; when: string; title: string; meta?: string; url?: string }
+interface FeedRow extends IntelligenceItem { }
 const MAX_ROWS = 60;
 
-function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
+function WatchlistFeed({ kind }: { kind: IntelligenceKind }) {
   const [codes, setCodes] = useState<string[]>(loadWatch);
   const [rows, setRows] = useState<FeedRow[]>([]);
+  const [gaps, setGaps] = useState<{ symbol: string; kind: IntelligenceKind; reason: string; message: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [depNote, setDepNote] = useState<string | null>(null);
 
-  const load = useCallback(async (cs: string[]) => {
-    if (!cs.length) { setRows([]); return; }
-    setLoading(true); setErr(null); setDepNote(null);
+  const load = async (cs: string[]) => {
+    if (!cs.length) { setRows([]); setGaps([]); return; }
+    setLoading(true); setErr(null);
     try {
-      // 股名（一次批量），失败则退回显示代码
-      const nameOf: Record<string, string> = {};
-      try {
-        const quotes = await api.quotes(cs.join(","));
-        for (const c of cs) if (quotes[c]?.name) nameOf[c] = quotes[c].name;
-      } catch { /* 忽略：无股名不影响公告/新闻 */ }
-
-      const out: FeedRow[] = [];
-      const feedCodes = cs.filter(isAShareSymbol);
-      if (kind === "filings") {
-        const res = await Promise.all(
-          feedCodes.map((c) => api.announcements(c).then((a) => ({ c, a })).catch(() => ({ c, a: [] as Announcement[] }))),
-        );
-        for (const { c, a } of res)
-          for (const x of a)
-            out.push({ code: c, name: nameOf[c] || c, when: x.date, title: x.title.replace(/^[^:：]*[:：]/, ""), meta: x.type, url: x.url });
-      } else {
-        let dep: string | null = null;
-        const res = await Promise.all(
-          feedCodes.map((c) =>
-            api.news(c).then((n) => ({ c, n })).catch((e) => {
-              if (e instanceof ApiError && e.status === 501) dep = e.message;
-              return { c, n: [] as NewsItem[] };
-            }),
-          ),
-        );
-        for (const { c, n } of res)
-          for (const x of n)
-            out.push({ code: c, name: nameOf[c] || c, when: x.发布时间 || "", title: x.新闻标题 || "", url: x.新闻链接 });
-        if (dep && out.length === 0) setDepNote(dep);
-      }
-      // 按真实时间倒序：多新闻源的时间字符串格式不统一（有无秒/斜杠日期），字典序会排乱
-      const ts = (s: string) => {
-        const raw = (s || "").trim();
-        let t = Date.parse(raw);
-        if (Number.isNaN(t)) t = Date.parse(raw.replace(" ", "T"));
-        return Number.isNaN(t) ? 0 : t;
-      };
-      out.sort((p, q) => ts(q.when) - ts(p.when));
-      setRows(out.slice(0, MAX_ROWS));
+      const feed = await api.intelligenceFeed(cs, [kind], 10);
+      setRows(feed.items.slice(0, MAX_ROWS));
+      setGaps(feed.gaps);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "加载失败");
     } finally {
       setLoading(false);
     }
-  }, [kind]);
+  };
 
   useEffect(() => { const cs = loadWatch(); setCodes(cs); load(cs); }, [load]);
 
@@ -251,7 +214,7 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
   if (!codes.length) {
     return (
       <div className="rounded-lg border border-dashed border-border/70 p-8 text-center text-sm text-muted-foreground/70">
-        还没有关注股票。到<Link to="/daily-review" className="text-primary">「每日复盘」</Link>加自选，这里会汇总已接入来源的{kind === "filings" ? "公告" : "新闻"}。
+        还没有关注股票。到<Link to="/daily-review" className="text-primary">「每日复盘」</Link>加自选，这里会汇总已接入来源的{kind === "filings" ? "监管文件" : kind === "news" ? "公司新闻" : "earnings"}。
       </div>
     );
   }
@@ -260,7 +223,7 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Star className="h-3.5 w-3.5 text-primary/70" /> 关注 {codes.length} 只 · 共 {rows.length} 条{kind === "filings" ? "公告" : "新闻"}（近期）
+          <Star className="h-3.5 w-3.5 text-primary/70" /> 关注 {codes.length} 只 · 共 {rows.length} 条{kind === "filings" ? "监管文件" : kind === "news" ? "新闻" : "earnings"}（近期）
         </span>
         <button onClick={refresh} disabled={loading}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50">
@@ -275,30 +238,27 @@ function WatchlistFeed({ kind }: { kind: "filings" | "news" }) {
         </div>
       )}
 
-      {depNote ? (
-        <p className="py-6 text-center text-xs text-warning">{depNote}（安装后新闻即可用）</p>
-      ) : loading && rows.length === 0 ? (
-        <p className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> 正在汇总关注股的{kind === "filings" ? "公告" : "新闻"}…</p>
+      {loading && rows.length === 0 ? (
+        <p className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> 正在汇总关注股的{kind === "filings" ? "监管文件" : kind === "news" ? "新闻" : "earnings"}…</p>
       ) : rows.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground/60">
-          {codes.some((code) => !isAShareSymbol(code))
-            ? `暂无可显示内容；美股和欧洲股票的${kind === "filings" ? "监管文件/公告" : "新闻"}数据源尚未接入。`
-            : `关注列表里的个股近期暂无${kind === "filings" ? "公告" : "新闻"}。`}
+          关注列表里的个股近期暂无可显示的{kind === "filings" ? "监管文件" : kind === "news" ? "公司新闻" : "earnings"}。
         </p>
       ) : (
         <div className="space-y-2">
           {rows.map((r, i) => (
             <a key={i} href={r.url || undefined} target={r.url ? "_blank" : undefined} rel="noreferrer"
               className={cn("group flex items-baseline gap-3 border-b border-border/30 pb-2 text-sm last:border-0", r.url && "cursor-pointer")}>
-              <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground/70">{(r.when || "").slice(kind === "filings" ? 0 : 5, kind === "filings" ? 10 : 16)}</span>
-              <span className="w-16 shrink-0 truncate text-xs text-primary/90" title={r.code}>{r.name}</span>
-              {kind === "filings" && r.meta && <span className="hidden w-20 shrink-0 truncate text-xs text-muted-foreground sm:block">{r.meta}</span>}
+              <span className="w-16 shrink-0 font-mono text-[10px] text-muted-foreground/70">{r.market} · {r.symbol}</span>
+              <span className="hidden w-24 shrink-0 truncate text-xs text-muted-foreground sm:block">{r.source || "—"}</span>
               <span className="flex-1 group-hover:text-primary">{r.title}</span>
+              {kind === "earnings" && r.meta?.surprise_pct != null && <span className="shrink-0 font-mono text-xs">{r.meta.surprise_pct}%</span>}
               {r.url && <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground/0 group-hover:text-primary/60" />}
             </a>
           ))}
         </div>
       )}
+      {gaps.length > 0 && <p className="mt-3 text-xs text-warning">数据缺口：{gaps.slice(0, 4).map((gap) => `${gap.symbol} ${gap.message}`).join("；")}</p>}
     </div>
   );
 }
@@ -334,6 +294,8 @@ export function Intel() {
           <WatchlistFeed kind="filings" />
         ) : cur.key === "news" ? (
           <WatchlistFeed kind="news" />
+        ) : cur.key === "earnings" ? (
+          <WatchlistFeed kind="earnings" />
         ) : (
           <>
             <p className="text-sm text-muted-foreground">{cur.desc}</p>

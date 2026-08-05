@@ -7,21 +7,21 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type GlobalIndex } from "@/lib/api";
+import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type BenchmarkData, type IntelligenceFeed } from "@/lib/api";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
-// A股红涨绿跌。全球市场（美股/港股指数）**也沿用红涨**——与整个看板及东财等中国平台一致，
-// 对中国用户最不易看错（Simon 2026-07-05 确认；非国际绿涨惯例，是有意选择，勿改）。
-const pctColor = (p: number | null | undefined) => p != null && p > 0 ? "text-danger" : p != null && p < 0 ? "text-success" : "text-muted-foreground";
+// International convention across the refocused app: green up, red down.
+const pctColor = (p: number | null | undefined) => p != null && p > 0 ? "text-success" : p != null && p < 0 ? "text-danger" : "text-muted-foreground";
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
 
 export function DailyReview() {
   const [indices, setIndices] = useState<IndexQuote[]>([]);
   const [idxErr, setIdxErr] = useState(false);
+  const [benchmarks, setBenchmarks] = useState<BenchmarkData | null>(null);
   const [review, setReview] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewErr, setReviewErr] = useState<string | null>(null);
@@ -29,7 +29,7 @@ export function DailyReview() {
   const [overview, setOverview] = useState<MarketOverview | null>(null);
   const [emotion, setEmotion] = useState<ShortTermEmotion | null>(null);
   const [turnover, setTurnover] = useState<TurnoverTop | null>(null);
-  const [globalIdx, setGlobalIdx] = useState<GlobalIndex[]>([]);
+  const [intelligence, setIntelligence] = useState<IntelligenceFeed | null>(null);
   // 关注股票（自选，存本地）
   const [watchCodes, setWatchCodes] = useState<string[]>(loadWatch);
   const [watchQuotes, setWatchQuotes] = useState<Record<string, Quote>>({});
@@ -43,7 +43,7 @@ export function DailyReview() {
 
   const loadIndices = () => {
     api.indices().then(setIndices).catch(() => setIdxErr(true));
-    api.globalIndices().then(setGlobalIdx).catch(() => {});
+    api.benchmarks().then(setBenchmarks).catch(() => setBenchmarks(null));
     api.marketOverview().then(setOverview).catch(() => {}).finally(() => setOvDone(true));
     api.emotion().then(setEmotion).catch(() => {}).finally(() => setEmoDone(true));
     api.turnoverTop().then(setTurnover).catch(() => {}).finally(() => setToDone(true));
@@ -62,9 +62,16 @@ export function DailyReview() {
     api.quotes(codes.join(",")).then(setWatchQuotes).catch(() => {}).finally(() => setWatchLoading(false));
   };
 
+  const refreshIntelligence = (codes: string[]) => {
+    if (!codes.length) { setIntelligence(null); return; }
+    api.intelligenceFeed(codes, ["filings", "news", "earnings"], 4).then(setIntelligence).catch(() => setIntelligence(null));
+  };
+
   useEffect(() => {
     loadIndices();
-    refreshWatch(loadWatch());
+    const codes = loadWatch();
+    refreshWatch(codes);
+    refreshIntelligence(codes);
   }, []);
 
   const addWatch = () => {
@@ -72,19 +79,25 @@ export function DailyReview() {
     const { next, added } = addCodes(watchCodes, watchInput);
     setWatchInput("");
     if (!added) return;
-    setWatchCodes(next); saveWatch(next); refreshWatch(next);
+    setWatchCodes(next); saveWatch(next); refreshWatch(next); refreshIntelligence(next);
   };
 
   const removeWatch = (c: string) => {
     const next = watchCodes.filter((x) => x !== c);
-    setWatchCodes(next); saveWatch(next); refreshWatch(next);
+    setWatchCodes(next); saveWatch(next); refreshWatch(next); refreshIntelligence(next);
   };
 
   const today = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
 
-  const dataSummary = indices.length
+  const aShareSummary = indices.length
     ? indices.map((i) => `${i.name} ${i.price}（${i.change_pct > 0 ? "+" : ""}${i.change_pct}%）`).join("；")
     : "（指数数据未取到）";
+  const benchmarkSummary = benchmarks?.items.filter((item) => item.available).map((item) =>
+    `${item.name} ${item.price ?? "—"}（${item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct}%`}）`,
+  ).join("；") || "（全球基准数据未取到）";
+  const intelligenceSummary = intelligence?.items.slice(0, 20).map((item) =>
+    `[${item.market} ${item.kind}] ${item.symbol} ${item.title}${item.meta?.surprise_pct != null ? ` surprise ${item.meta.surprise_pct}%` : ""}`,
+  ).join("\n") || "（关注股票事件数据未取到）";
 
   const runReview = async () => {
     setReviewErr(null);
@@ -99,12 +112,14 @@ export function DailyReview() {
         }).join("；")
       : "（未添加关注股票）";
     const prompt =
-      `以下是今天 A 股大盘的客观数据：\n${dataSummary}\n\n` +
-      `以下是用户关注的 A 股、美股或欧洲股票行情：\n${watchSummary}\n\n` +
-      "请用中文做一段当天大盘复盘：整体涨跌、主要指数表现、盘面值得注意的点。" +
+      `以下是今天美国与欧洲主要基准的客观数据：\n${benchmarkSummary}\n\n` +
+      `以下是用户关注的跨市场股票行情：\n${watchSummary}\n\n` +
+      `以下是关注股票的近期文件、新闻与 earnings：\n${intelligenceSummary}\n\n` +
+      `以下是 A 股数据（次要参考）：\n${aShareSummary}\n\n` +
+      "请用中文做一段跨市场当天复盘：先总结美国与欧洲市场，再总结关注股票事件，最后简要补充 A 股。" +
       "只做客观陈述与多视角分析，不预测涨跌、不推荐任何标的、不构成投资建议。";
     try {
-      await chatStream([{ role: "user", content: prompt }], `今日大盘数据：${dataSummary}`, {
+      await chatStream([{ role: "user", content: prompt }], `今日跨市场数据：${benchmarkSummary}`, {
         onDelta: (t) => setReview((r) => r + t),
       });
     } catch (e) {
@@ -131,58 +146,37 @@ export function DailyReview() {
     <div>
       <PageHeader
         title="每日复盘"
-        subtitle={`${today} · 大盘 / 情绪 / 板块资金一屏看全，交给你的 AI 做复盘`}
+        subtitle={`${today} · 美国 / 欧洲基准、自选股事件与 AI 复盘一屏看全`}
         actions={
           <AskAiButton
-            context={`今日大盘数据：${dataSummary}`}
+            context={`今日跨市场数据：${benchmarkSummary}\n关注股票事件：\n${intelligenceSummary}`}
             label="问 AI"
             suggestions={["今天大盘怎么走", "哪些指数领涨领跌", "盘面有什么值得注意"]}
           />
         }
       />
 
-      {/* 1. 大盘指数（实时） */}
+      {/* 1. Global headline benchmarks */}
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-muted-foreground">大盘指数</h3>
+        <h3 className="text-sm font-semibold text-muted-foreground">全球主要基准</h3>
         <button onClick={loadIndices} className="text-muted-foreground hover:text-primary" title="刷新"><RefreshCw className="h-3.5 w-3.5" /></button>
       </div>
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {indices.length === 0
-          ? [1, 2, 3, 4].map((i) => (
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {!benchmarks
+          ? [1, 2, 3, 4, 5, 6].map((i) => (
               <GlassCard key={i} className="p-3">
                 <p className="text-xs text-muted-foreground">{idxErr ? "行情未接通" : "加载中…"}</p>
                 <p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p>
               </GlassCard>
             ))
-          : indices.map((i) => (
-              <GlassCard key={i.name} className="p-3">
-                <p className="truncate text-xs text-muted-foreground">{i.name}</p>
-                <p className={cn("mt-1 font-mono text-lg font-bold", pctColor(i.change_pct))}>{i.price}</p>
-                <p className={cn("text-xs", pctColor(i.change_pct))}>{i.change_pct > 0 ? "+" : ""}{i.change_pct}%</p>
+          : benchmarks.items.map((item) => (
+              <GlassCard key={item.key} className="p-3">
+                <p className="truncate text-xs text-muted-foreground">{item.name} <span className="text-muted-foreground/40">{item.region}</span></p>
+                <p className={cn("mt-1 font-mono text-lg font-bold", pctColor(item.change_pct))}>{item.price ?? "—"}</p>
+                <p className={cn("text-xs", pctColor(item.change_pct))}>{item.change_pct == null ? "—" : `${item.change_pct > 0 ? "+" : ""}${item.change_pct}%`}</p>
               </GlassCard>
             ))}
       </div>
-
-      {/* 1b. 全球市场（隔夜外围脸色：A 股常看美股 / 港股） */}
-      {globalIdx.length > 0 && (
-        <>
-          <div className="mb-3 flex items-center gap-2">
-            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Globe className="h-4 w-4" /> 全球市场</h3>
-            <span className="text-[11px] text-muted-foreground/50">隔夜外围 · A 股常看美股 / 港股脸色</span>
-          </div>
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
-            {globalIdx.map((g) => (
-              <GlassCard key={g.key} className="p-3">
-                <p className="truncate text-xs text-muted-foreground">{g.name} <span className="text-muted-foreground/40">{g.region}</span></p>
-                <p className={cn("mt-1 font-mono text-lg font-bold", g.change_pct == null ? "text-foreground" : pctColor(g.change_pct))}>{g.price ?? "—"}</p>
-                <p className={cn("text-xs", g.change_pct == null ? "text-muted-foreground" : pctColor(g.change_pct))}>
-                  {g.change_pct == null ? "—" : `${g.change_pct > 0 ? "+" : ""}${g.change_pct}%`}
-                </p>
-              </GlassCard>
-            ))}
-          </div>
-        </>
-      )}
 
       {/* 2. 关注股票（自选） */}
       <div className="mb-3 flex items-center justify-between">
@@ -231,6 +225,32 @@ export function DailyReview() {
         )}
       </GlassCard>
 
+      <div className="mb-3 flex items-center gap-2">
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Globe className="h-4 w-4" />关注股票事件</h3>
+        <span className="text-[11px] text-muted-foreground/50">监管文件 · 新闻 · Earnings</span>
+      </div>
+      <GlassCard className="mb-6">
+        {!watchCodes.length ? (
+          <p className="py-4 text-center text-sm text-muted-foreground/60">添加关注股票后，这里会按市场汇总可用的文件、新闻与 earnings。</p>
+        ) : !intelligence ? (
+          <p className="py-4 text-center text-sm text-muted-foreground/60">事件数据加载中或当前数据源不可用。</p>
+        ) : intelligence.items.length === 0 ? (
+          <p className="py-4 text-center text-sm text-muted-foreground/60">近期没有可显示事件；缺口会在资讯雷达中注明。</p>
+        ) : (
+          <div className="space-y-2">
+            {intelligence.items.slice(0, 12).map((item, index) => (
+              <a key={`${item.symbol}-${item.kind}-${item.published_at}-${index}`} href={item.url || undefined} target={item.url ? "_blank" : undefined} rel="noreferrer"
+                className={cn("group flex items-baseline gap-3 border-b border-border/30 pb-2 text-sm last:border-0", item.url && "cursor-pointer")}>
+                <span className="w-16 shrink-0 font-mono text-[10px] text-muted-foreground/70">{item.market} · {item.kind}</span>
+                <span className="w-16 shrink-0 truncate text-xs text-primary/90">{item.symbol}</span>
+                <span className="flex-1 truncate group-hover:text-primary">{item.title}</span>
+                <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:block">{item.published_at}</span>
+              </a>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
       {/* 3. AI 当日复盘 */}
       <GlassCard glow className="mb-6">
         <div className="flex items-center justify-between">
@@ -262,7 +282,22 @@ export function DailyReview() {
         ) : null}
       </GlassCard>
 
-      {/* 4. 市场情绪 */}
+      <div className="mb-4 mt-2 border-t border-border/50 pt-5">
+        <h2 className="text-base font-bold">A股市场工具</h2>
+        <p className="mt-1 text-xs text-muted-foreground/60">保留原有 A 股指数、情绪、短线榜单与板块资金模块。</p>
+      </div>
+
+      {/* 4. A-share indices */}
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-muted-foreground">A股指数</h3>
+      </div>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {indices.length === 0
+          ? [1, 2, 3, 4].map((i) => <GlassCard key={i} className="p-3"><p className="text-xs text-muted-foreground">行情未接通</p><p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p></GlassCard>)
+          : indices.map((i) => <GlassCard key={i.name} className="p-3"><p className="truncate text-xs text-muted-foreground">{i.name}</p><p className={cn("mt-1 font-mono text-lg font-bold", pctColor(i.change_pct))}>{i.price}</p><p className={cn("text-xs", pctColor(i.change_pct))}>{i.change_pct > 0 ? "+" : ""}{i.change_pct}%</p></GlassCard>)}
+      </div>
+
+      {/* 5. Market emotion */}
       <div className="mb-3 flex items-center gap-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Gauge className="h-4 w-4" /> 市场情绪</h3>
         {sentiment?.date && <span className="text-[11px] text-muted-foreground/50">{sentiment.date}</span>}
@@ -288,7 +323,7 @@ export function DailyReview() {
               {sentCells.map((c) => (
                 <div key={c.k} className="rounded-lg bg-muted/20 p-2 text-center">
                   <p className="truncate text-[11px] text-muted-foreground">{c.k}</p>
-                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.up === null ? "text-foreground" : c.up ? "text-danger" : "text-success")}>{c.v}</p>
+                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.up === null ? "text-foreground" : c.up ? "text-success" : "text-danger")}>{c.v}</p>
                 </div>
               ))}
             </div>
@@ -310,8 +345,8 @@ export function DailyReview() {
             {/* 关键计数 */}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                { k: "涨停", v: `${emotion.zt_count}`, cls: "text-danger" },
-                { k: "跌停", v: `${emotion.dt_count}`, cls: "text-success" },
+                { k: "涨停", v: `${emotion.zt_count}`, cls: "text-success" },
+                { k: "跌停", v: `${emotion.dt_count}`, cls: "text-danger" },
                 { k: "最高连板", v: `${emotion.max_boards} 板`, cls: "text-primary" },
                 { k: "连板（2板+）", v: `${emotion.lianban_count} 家`, cls: "text-primary" },
               ].map((c) => (
@@ -324,13 +359,13 @@ export function DailyReview() {
             {/* 打板情绪比率 */}
             <div className="mt-2 grid grid-cols-3 gap-2">
               {[
-                { k: "封板率", v: emotion.seal_rate, hint: "封住 / 尝试涨停", strong: true },
-                { k: "炸板率", v: emotion.break_rate, hint: "炸板 / 尝试涨停", strong: false },
+                    { k: "封板率", v: emotion.seal_rate, hint: "封住 / 尝试涨停", strong: true },
+                    { k: "炸板率", v: emotion.break_rate, hint: "炸板 / 尝试涨停", strong: false },
                 { k: "晋级率", v: emotion.promotion_rate, hint: "昨涨停今又停", strong: true },
               ].map((c) => (
                 <div key={c.k} className="rounded-lg bg-muted/20 p-2.5 text-center">
                   <p className="text-[11px] text-muted-foreground">{c.k}</p>
-                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.strong ? "text-danger" : "text-success")}>
+                  <p className={cn("mt-0.5 font-mono text-sm font-bold", c.strong ? "text-success" : "text-danger")}>
                     {c.v == null ? "—" : `${(c.v * 100).toFixed(1)}%`}
                   </p>
                   <p className="mt-0.5 text-[10px] text-muted-foreground/50">{c.hint}</p>
@@ -358,7 +393,7 @@ export function DailyReview() {
                           <td className="px-2 py-2"><span className="font-medium">{s.name}</span> <span className="text-xs text-muted-foreground/50">{s.code}</span></td>
                           <td className="whitespace-nowrap px-2 py-2 font-mono font-bold text-primary">{s.boards} 板</td>
                           <td className="px-2 py-2 font-mono">{s.price}</td>
-                          <td className="px-2 py-2 font-mono text-danger">+{s.pct}%</td>
+                          <td className="px-2 py-2 font-mono text-success">+{s.pct}%</td>
                           <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.amount)}</td>
                           <td className="whitespace-nowrap px-2 py-2 font-mono text-muted-foreground">{yi(s.float_cap)}</td>
                           <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{s.industry}</td>
@@ -454,8 +489,8 @@ export function DailyReview() {
       </div>
       <div className="mb-2 grid gap-4 md:grid-cols-2">
         {[
-          { title: "流入 Top", icon: TrendingUp, color: "text-danger", rows: sectors.slice(0, 6) },
-          { title: "流出 Top", icon: TrendingDown, color: "text-success", rows: [...sectors].slice(-6).reverse() },
+          { title: "流入 Top", icon: TrendingUp, color: "text-success", rows: sectors.slice(0, 6) },
+          { title: "流出 Top", icon: TrendingDown, color: "text-danger", rows: [...sectors].slice(-6).reverse() },
         ].map((col) => (
           <GlassCard key={col.title}>
             <h4 className={cn("mb-3 flex items-center gap-1.5 text-sm font-semibold", col.color)}><col.icon className="h-4 w-4" /> {col.title}</h4>

@@ -15,10 +15,10 @@ const num = (s: string | number | null | undefined): number | null => {
   return Number.isNaN(n) ? null : n;
 };
 
-// A股红涨绿跌：正=红 负=绿。
+// International convention: positive=green, negative=red.
 const yoyColor = (s: string | null | undefined) => {
   const n = num(s);
-  return n == null ? "text-muted-foreground" : n > 0 ? "text-danger" : n < 0 ? "text-success" : "text-muted-foreground";
+  return n == null ? "text-muted-foreground" : n > 0 ? "text-success" : n < 0 ? "text-danger" : "text-muted-foreground";
 };
 
 interface Props {

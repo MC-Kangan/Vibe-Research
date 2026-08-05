@@ -87,6 +87,47 @@ def test_market_data_bars_envelope(monkeypatch):
     assert response.json()["data"] == {"symbol": "SAP.DE", "range": "6mo", "interval": "1d"}
 
 
+def test_market_news_envelope(monkeypatch):
+    monkeypatch.setattr(app_module.market_data, "get_company_news", lambda symbol, days: {"symbol": symbol, "days": days})
+    response = client.get("/api/market-data/news?symbol=AAPL&days=7")
+    assert response.status_code == 200
+    assert response.json()["data"] == {"symbol": "AAPL", "days": 7}
+
+
+def test_benchmarks_envelope(monkeypatch):
+    monkeypatch.setattr(app_module.market_data, "get_benchmarks", lambda: {"items": [], "gaps": [], "fetched_at": "now"})
+    response = client.get("/api/market-data/benchmarks")
+    assert response.status_code == 200
+    assert response.json()["data"]["items"] == []
+
+
+def test_intelligence_feed_normalizes_symbols_and_dispatches(monkeypatch):
+    monkeypatch.setattr(app_module.market_intelligence, "collect", lambda symbols, kinds, limit: {
+        "symbols": symbols, "kinds": kinds, "limit": limit, "items": [], "gaps": [], "fetched_at": "now",
+    })
+    response = client.post("/api/intelligence/feed", json={
+        "symbols": ["aapl", "SAP.DE"], "kinds": ["news"], "limit_per_symbol": 3,
+    })
+    assert response.status_code == 200
+    assert response.json()["data"]["symbols"] == ["AAPL", "SAP.DE"]
+    assert response.json()["data"]["limit"] == 3
+
+
+def test_intelligence_feed_rejects_empty_or_oversized_requests():
+    assert client.post("/api/intelligence/feed", json={"symbols": [], "kinds": ["news"]}).status_code == 400
+    assert client.post("/api/intelligence/feed", json={"symbols": ["AAPL"] * 31, "kinds": ["news"]}).status_code == 400
+
+
+def test_optional_provider_configuration_maps_to_503(monkeypatch):
+    def fail(_symbol):
+        raise app_module.market_data.ProviderConfigurationError("missing trial key")
+
+    monkeypatch.setattr(app_module.market_data, "get_earnings", fail)
+    response = client.get("/api/market-data/earnings?symbol=AAPL")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "missing trial key"
+
+
 def test_universal_quotes_combines_a_share_and_us(monkeypatch):
     monkeypatch.setattr(app_module.astock, "tencent_quote", lambda codes: {
         code: {"name": "贵州茅台", "price": 100.0, "change_pct": 1.0} for code in codes

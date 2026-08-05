@@ -11,6 +11,8 @@ services:
       VR_REPORTS_DIR: /data/myreports
       VR_ALLOW_ORIGINS: ${VR_PUBLIC_ORIGIN:-http://127.0.0.1:8080}
       VR_API_KEY: ${VR_API_KEY:-}
+      VR_FINNHUB_API_KEY: ${VR_FINNHUB_API_KEY:-}
+      VR_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:-}
     volumes:
       - ${VR_DATA_PATH:-vibe-data}:/data
     expose:
