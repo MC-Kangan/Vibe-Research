@@ -11,8 +11,29 @@ services:
       VR_REPORTS_DIR: /data/myreports
       VR_ALLOW_ORIGINS: ${VR_PUBLIC_ORIGIN:-http://127.0.0.1:8080}
       VR_API_KEY: ${VR_API_KEY:-}
+      VR_AUTH_ENABLED: ${VR_AUTH_ENABLED:-false}
+      VR_AUTH_USERNAME: ${VR_AUTH_USERNAME:-}
+      VR_AUTH_PASSWORD_HASH: ${VR_AUTH_PASSWORD_HASH:-}
+      VR_SESSION_SECRET: ${VR_SESSION_SECRET:-}
+      VR_SESSION_TTL_HOURS: ${VR_SESSION_TTL_HOURS:-12}
+      VR_AUTH_COOKIE_SECURE: ${VR_AUTH_COOKIE_SECURE:-false}
       VR_FINNHUB_API_KEY: ${VR_FINNHUB_API_KEY:-}
       VR_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:-}
+      VR_TRADE_RESEARCH_ENABLED: ${VR_TRADE_RESEARCH_ENABLED:-false}
+      VR_TRADE_RESEARCH_BASE_URL: ${VR_TRADE_RESEARCH_BASE_URL:-http://research-api:8000}
+      VR_TRADE_RESEARCH_API_TOKEN: ${VR_TRADE_RESEARCH_API_TOKEN:-}
+      VR_TRADE_RESEARCH_TIMEOUT_SECONDS: ${VR_TRADE_RESEARCH_TIMEOUT_SECONDS:-30}
+      VR_PA_MASTER_ENABLED: ${VR_PA_MASTER_ENABLED:-false}
+      VR_PA_MASTER_BASE_URL: ${VR_PA_MASTER_BASE_URL:-}
+      VR_PA_MASTER_USERNAME: ${VR_PA_MASTER_USERNAME:-}
+      VR_PA_MASTER_PASSWORD: ${VR_PA_MASTER_PASSWORD:-}
+      VR_PA_MASTER_TIMEOUT_SECONDS: ${VR_PA_MASTER_TIMEOUT_SECONDS:-10}
+      VR_IBKR_FLEX_TOKEN: ${VR_IBKR_FLEX_TOKEN:-}
+      VR_IBKR_FLEX_QUERY_ID: ${VR_IBKR_FLEX_QUERY_ID:-}
+      VR_IBKR_FLEX_BASE_URL: ${VR_IBKR_FLEX_BASE_URL:-https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService}
+      VR_IBKR_FLEX_TIMEZONE: ${VR_IBKR_FLEX_TIMEZONE:-Europe/London}
+      VR_IBKR_FLEX_COOLDOWN_SECONDS: ${VR_IBKR_FLEX_COOLDOWN_SECONDS:-300}
+      VR_IBKR_POSITION_STORE: ${VR_IBKR_POSITION_STORE:-/data/ibkr-positions.json}
     volumes:
       - ${VR_DATA_PATH:-vibe-data}:/data
     expose:
@@ -24,6 +45,27 @@ services:
       start_period: 30s
       retries: 3
     mem_limit: 2g
+
+  research-api:
+    profiles: ["research"]
+    image: ${TRADE_RESEARCH_IMAGE:-trade-research:latest}
+    restart: unless-stopped
+    init: true
+    command: ["trade-research", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      TRADE_RESEARCH_API_TOKEN: ${VR_TRADE_RESEARCH_API_TOKEN:-}
+      TRADE_RESEARCH_PRICE_PROVIDER: ${TRADE_RESEARCH_PRICE_PROVIDER:-yahoo}
+      TRADE_RESEARCH_DATA_DIR: /var/lib/trade-research
+    volumes:
+      - trade-research-data:/var/lib/trade-research
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=5).close()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
 
   frontend:
     build:
@@ -44,3 +86,4 @@ services:
 
 volumes:
   vibe-data:
+  trade-research-data:

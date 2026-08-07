@@ -10,15 +10,17 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import astock
+import auth as auth_layer
 import chat as chat_layer
 import cli_runtime
 import debate as debate_layer
@@ -29,7 +31,10 @@ import newsradar
 import portfolio as pf
 import market
 import myreports as mr
+import pa_master as pa_master_layer
+import position_service
 import reflection as reflect_layer
+import research as research_layer
 
 app = FastAPI(title="Vibe-Research API", version="0.2.2")
 
@@ -44,23 +49,30 @@ app.add_middleware(
     allow_origins=_ORIGINS,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    allow_credentials="*" not in _ORIGINS,
 )
 
 # 可选鉴权：设了 VR_API_KEY 就要求所有 /api/* 带 `Authorization: Bearer <key>`
 #   （本地自托管不设=开放；公网部署务必设，否则别人能读你的持仓/调你的后端）。
 _API_KEY = os.environ.get("VR_API_KEY", "").strip()
 
+if auth_layer.enabled():
+    auth_layer.validate_configuration()
+
 
 @app.middleware("http")
 async def _require_api_key(request: Request, call_next):
     if (
-        _API_KEY
-        and request.method != "OPTIONS"
+        request.method != "OPTIONS"
         and request.url.path.startswith("/api/")
-        and request.url.path != "/api/health"
+        and request.url.path not in {"/api/health", "/api/auth/session", "/api/auth/login", "/api/auth/logout"}
     ):
-        if request.headers.get("authorization", "") != f"Bearer {_API_KEY}":
-            return JSONResponse({"detail": "未授权：缺少或错误的 API Key（VR_API_KEY）"}, status_code=401)
+        if _API_KEY and auth_layer.bearer_authorized(request, _API_KEY):
+            return await call_next(request)
+        if auth_layer.enabled() and auth_layer.session_username(request):
+            return await call_next(request)
+        if _API_KEY or auth_layer.enabled():
+            return JSONResponse({"detail": "未授权：请登录或提供有效的 API Key"}, status_code=401)
     return await call_next(request)
 
 _CODE_RE = r"^\d{6}$"
@@ -87,6 +99,45 @@ def _validate_stock_symbol(symbol: str) -> str:
 @app.get("/api/health")
 def health():
     return {"ok": True, "service": "vibe-research-api", "version": "0.2.2"}
+
+
+class AuthLoginReq(BaseModel):
+    username: str
+    password: str
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request):
+    username = auth_layer.session_username(request)
+    return {
+        "data": {
+            "enabled": auth_layer.enabled(),
+            "authenticated": bool(username),
+            "username": username,
+        }
+    }
+
+
+@app.post("/api/auth/login")
+def auth_login(req: AuthLoginReq, response: Response):
+    if not auth_layer.enabled():
+        raise HTTPException(404, "Application authentication is disabled")
+    if not auth_layer.login_allowed():
+        raise HTTPException(429, "Too many failed login attempts; try again later")
+    expected_username = os.environ.get("VR_AUTH_USERNAME", "").strip()
+    expected_hash = os.environ.get("VR_AUTH_PASSWORD_HASH", "").strip()
+    if not hmac.compare_digest(req.username.strip(), expected_username) or not auth_layer.verify_password(req.password, expected_hash):
+        auth_layer.record_failed_login()
+        raise HTTPException(401, "Invalid username or password")
+    auth_layer.clear_failed_logins()
+    auth_layer.set_session_cookie(response, auth_layer.issue_session(expected_username))
+    return {"data": {"enabled": True, "authenticated": True, "username": expected_username}}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(response: Response):
+    auth_layer.clear_session_cookie(response)
+    return {"data": {"authenticated": False}}
 
 
 class LLMConfig(BaseModel):
@@ -212,6 +263,27 @@ def portfolio_get():
         raise HTTPException(502, f"持仓读取异常：{e}") from e
 
 
+class PositionRefreshIn(BaseModel):
+    confirm_empty: bool = False
+
+
+@app.get("/api/positions/current")
+def positions_current():
+    """Return the last normalized real-position snapshot without broker I/O."""
+    return {"data": position_service.get_current()}
+
+
+@app.post("/api/positions/refresh")
+def positions_refresh(request: PositionRefreshIn):
+    """Perform an explicit read-only IBKR Flex current-position refresh."""
+    try:
+        return {"data": position_service.refresh(confirm_empty=request.confirm_empty)}
+    except position_service.PositionServiceError as exc:
+        message = str(exc)
+        status = 429 if "cooling down" in message else 409 if "confirm_empty" in message else 503
+        raise HTTPException(status, message) from exc
+
+
 @app.post("/api/portfolio/holding")
 def portfolio_add(h: HoldingIn):
     """加一笔持仓（同代码按加权平均成本合并）。存本地，不上传。"""
@@ -301,6 +373,12 @@ def portfolio_refresh():
         return {"data": pf.get_portfolio()}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"刷新失败：{e}") from e
+
+
+@app.get("/api/portfolio/pa-master")
+def pa_master_portfolio():
+    """Read PA Master's portfolio snapshot without importing it into local storage."""
+    return pa_master_layer.get_portfolio()
 
 
 @app.get("/api/radar")
@@ -417,6 +495,61 @@ def intelligence_feed(req: IntelligenceFeedReq):
     except HTTPException:
         raise
     return {"data": market_intelligence.collect(symbols, req.kinds, req.limit_per_symbol)}
+
+
+class ResearchRunReq(BaseModel):
+    symbol: str
+    skills: list[str]
+    skill_parameters: dict[str, dict] = Field(default_factory=dict)
+
+
+@app.get("/api/research/skills")
+def research_skills():
+    """Return the read-only TradeAgent skills exposed in Vibe Research."""
+    if not research_layer.configured():
+        return {"configured": False, "status": "disabled", "skills": []}
+    try:
+        skills = research_layer.list_skills()
+    except research_layer.ResearchClientError as exc:
+        return {"configured": True, "status": "unavailable", "detail": str(exc), "skills": []}
+    return {"configured": True, "status": "available", "skills": skills}
+
+
+@app.post("/api/research/run")
+def research_run(req: ResearchRunReq):
+    """Fetch one shared price dossier, then run selected TradeAgent skills."""
+    skills = list(dict.fromkeys(item.strip() for item in req.skills if item.strip()))
+    if not skills:
+        raise HTTPException(422, "请选择至少一个分析技能")
+    if any(skill not in research_layer.ALLOWED_SKILLS for skill in skills):
+        raise HTTPException(422, "包含未启用的分析技能")
+    if not research_layer.configured():
+        raise HTTPException(503, "TradeAgent is not configured")
+    try:
+        inputs = research_layer.build_run_inputs(req.symbol, skills, req.skill_parameters)
+    except research_layer.ResearchClientError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    results_by_skill = {}
+    with ThreadPoolExecutor(max_workers=len(skills)) as executor:
+        futures = {
+            executor.submit(
+                research_layer.run_skill,
+                skill=skill,
+                symbol=inputs["symbol"],
+                market=inputs["market"],
+                skill_parameters={skill: req.skill_parameters.get(skill, {})},
+                price_series=inputs["price_series"],
+            ): skill
+            for skill in skills
+        }
+        for future in as_completed(futures):
+            skill = futures[future]
+            try:
+                results_by_skill[skill] = {"skill": skill, "status": "complete", "report": future.result()}
+            except research_layer.ResearchClientError as exc:
+                results_by_skill[skill] = {"skill": skill, "status": "failed", "detail": str(exc)}
+    results = [results_by_skill[skill] for skill in skills]
+    return {"symbol": inputs["symbol"], "market": inputs["market"], "results": results}
 
 
 @app.get("/api/global/stock")

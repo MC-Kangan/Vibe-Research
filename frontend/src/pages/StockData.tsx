@@ -9,6 +9,8 @@ import { AskAiButton } from "@/components/ui/AskAiButton";
 import { EarningsSnapshot } from "@/components/ui/EarningsSnapshot";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { MarketStockView } from "@/components/market/EuropeanStockView";
+import { SkillAnalysisPanel } from "@/components/market/SkillAnalysisPanel";
+import { PriceHistoryChart } from "@/components/market/PriceHistoryChart";
 import {
   api, ApiError, type Valuation, type Report, type NewsItem, type ValPercentile, type ValMetric,
   type Financials, type Announcement, type MarginRow, type BlockTradeRow, type HolderRow,
@@ -111,6 +113,7 @@ export function StockData() {
   const [marketFilings, setMarketFilings] = useState<SecFilings | null>(null);
   const [marketSecFacts, setMarketSecFacts] = useState<SecFacts | null>(null);
   const [marketSourceGaps, setMarketSourceGaps] = useState<string[]>([]);
+  const [aShareHistory, setAShareHistory] = useState<MarketHistoricalSeries | null>(null);
   const runIdRef = useRef(0);
 
   const run = async () => {
@@ -121,6 +124,7 @@ export function StockData() {
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
     setGStock(null); setCashflow(null); setMarketSnapshot(null); setMarketHistory(null);
     setMarketNews(null); setMarketEarnings(null); setMarketFilings(null); setMarketSecFacts(null); setMarketSourceGaps([]);
+    setAShareHistory(null);
 
     const route = stockDataRoute(c);
 
@@ -183,6 +187,26 @@ export function StockData() {
     api.blocks(c).then(ok(setBlocks)).catch(() => {});
     api.hotConcepts(c).then(ok(setHotCon)).catch(() => {});
     api.investorQa(c).then(ok(setQa)).catch(() => {});
+    api.aShareBars(c).then((aBars) => {
+      if (rid !== runIdRef.current) return;
+      setAShareHistory({
+        provider_symbol: c,
+        range: "240d",
+        interval: "1d",
+        source: "mootdx",
+        fetched_at: new Date().toISOString(),
+        bars: aBars.map((bar) => ({
+          date: String(bar.date),
+          open: bar.open == null ? null : Number(bar.open),
+          high: bar.high == null ? null : Number(bar.high),
+          low: bar.low == null ? null : Number(bar.low),
+          close: bar.close == null ? null : Number(bar.close),
+          adjusted_close: bar.close == null ? null : Number(bar.close),
+          volume: bar.volume == null ? null : Number(bar.volume),
+          currency: "CNY",
+        })),
+      });
+    }).catch(() => {});
     try {
       // 行情+估值+研报+历史分位+财务+公告（新闻单独降级）
       const [v, r, p, f, a] = await Promise.all([
@@ -398,13 +422,18 @@ export function StockData() {
           )}
 
           <p className="text-xs text-muted-foreground/60">
-            美股 / 港股数据来自 <a href="https://github.com/simonlin1212/global-stock-data" target="_blank" rel="noreferrer" className="hover:text-primary">global-stock-data</a>（东财域内源）· 金额为原生币种 · 仅客观数据，不含买卖建议。
+            美股 / 港股数据来自公开市场数据源 · 金额为原生币种 · 仅客观数据，不含买卖建议。
           </p>
         </>
       )}
 
       {val && (
         <>
+          {aShareHistory && aShareHistory.bars.length > 0 && <GlassCard className="mb-4">
+            <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><LineChart className="h-4 w-4 text-primary" /> 日线行情 · {aShareHistory.range}</h3>
+            <p className="mb-2 text-[11px] text-muted-foreground/60">A 股日线趋势与成交量；拖动底部区间可缩放。</p>
+            <PriceHistoryChart bars={aShareHistory.bars} currency="CNY" />
+          </GlassCard>}
           <GlassCard glow className="mb-4">
             <div className="mb-4 flex items-baseline gap-2">
               <h2 className="text-xl font-bold">{val.name}</h2>
@@ -663,6 +692,12 @@ export function StockData() {
           </div>
         </GlassCard>
       )}
+
+      <SkillAnalysisPanel
+        key={marketSnapshot?.instrument.provider_symbol || val?.code || "none"}
+        symbol={marketSnapshot?.instrument.provider_symbol || val?.code || null}
+        supported={Boolean(marketSnapshot || val)}
+      />
 
       <Disclaimer />
     </div>

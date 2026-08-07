@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { Swords, Play, Square, Save, CheckCircle2, Circle, AlertTriangle } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { SafeMarkdown } from "@/components/ui/SafeMarkdown";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
@@ -192,7 +191,7 @@ export function Debate() {
               {!s.done && <span className="animate-pulse text-[11px] text-muted-foreground">生成中…</span>}
             </div>
             <div className="prose prose-sm prose-invert max-w-none text-foreground prose-table:text-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.content || "…"}</ReactMarkdown>
+              <SafeMarkdown>{s.content || "…"}</SafeMarkdown>
             </div>
           </div>
         ))}

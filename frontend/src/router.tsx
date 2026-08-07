@@ -11,10 +11,11 @@ import { Watchlist } from "@/pages/Watchlist";
 import { MyReports } from "@/pages/MyReports";
 import { Notes } from "@/pages/Notes";
 import { Settings } from "@/pages/Settings";
+import { AuthGate } from "@/components/auth/AuthGate";
 
 export const router = createBrowserRouter([
   {
-    element: <Layout />,
+    element: <AuthGate><Layout /></AuthGate>,
     children: [
       { path: "/", element: <Navigate to="/daily-review" replace /> },
       { path: "/daily-review", element: <DailyReview /> },

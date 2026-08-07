@@ -145,7 +145,7 @@ TOOL_NAMES = [t["function"]["name"] for t in TOOLS]
 _TENCENT_KLINE = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
 
-def _kline_tencent(code: str, period: str, n: int) -> list[dict]:
+def _kline_tencent(code: str, period: str, n: int, prefix: str | None = None) -> list[dict]:
     """腾讯前复权 K 线（备用源）。
 
     mootdx 走 TCP 7709，在部分网络下连不通（实测本机返回空）；东财 push2his 的 kline 路径
@@ -154,7 +154,7 @@ def _kline_tencent(code: str, period: str, n: int) -> list[dict]:
     """
     import requests
 
-    prefix = astock.get_prefix(code)
+    prefix = prefix or astock.get_prefix(code)
     sym = f"{prefix}{code}"
     r = requests.get(_TENCENT_KLINE, params={"param": f"{sym},{period},,,{n},qfq"},
                      headers={"User-Agent": "Mozilla/5.0"}, timeout=12)

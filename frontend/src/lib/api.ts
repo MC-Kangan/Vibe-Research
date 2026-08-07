@@ -36,6 +36,71 @@ export interface MyReport {
   id: string; name: string; industry: string; size: number; ext: string; ts: number;
 }
 
+export interface ResearchSkill {
+  name: string;
+  description: string;
+  immutable?: boolean;
+  parameters?: {
+    properties?: Record<string, {
+      type?: string; default?: string | number | boolean; minimum?: number; maximum?: number;
+    }>;
+  } | null;
+}
+export interface ResearchSkillsResponse {
+  configured: boolean;
+  status: "available" | "disabled" | "unavailable";
+  detail?: string;
+  skills: ResearchSkill[];
+}
+export interface ResearchRunResult {
+  skill: string;
+  status: "complete" | "failed";
+  detail?: string;
+  report?: Record<string, unknown>;
+}
+export interface ResearchRunResponse {
+  symbol: string;
+  market: string;
+  results: ResearchRunResult[];
+}
+
+export interface AuthSession {
+  enabled: boolean;
+  authenticated: boolean;
+  username: string | null;
+}
+
+export interface RealPosition {
+  account_ref: string;
+  account_label: string;
+  symbol: string;
+  name: string;
+  asset_class: string;
+  currency: string;
+  venue: string | null;
+  quantity: number | null;
+  average_cost: number | null;
+  latest_price: number | null;
+  market_value: number | null;
+  reporting_market_value: number | null;
+  unrealized_pnl: number | null;
+  fx_rate: number | null;
+  reporting_currency: string | null;
+  cost_status: string;
+  observed_at: string | null;
+}
+
+export interface RealPositionSnapshot {
+  status: "available" | "empty" | "not_configured" | "error";
+  source: "ibkr-flex";
+  fetched_at: string | null;
+  refreshed_at: string | null;
+  report_date: string | null;
+  summary: { reporting_currency: string | null; nav: number | null; reporting_coverage: number | null };
+  positions: RealPosition[];
+  warnings: string[];
+}
+
 // 下载/预览研报：带鉴权头 fetch → blob → 触发浏览器下载（<a download> 无法带 Authorization，故走 blob）。
 export async function downloadReport(id: string, name: string): Promise<void> {
   const resp = await fetch(`/api/myreports/file/${id}`, { headers: authHeaders() });
@@ -54,7 +119,7 @@ export async function downloadReport(id: string, name: string): Promise<void> {
 async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<T> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
-  const opts: RequestInit = { method };
+  const opts: RequestInit = { method, credentials: "same-origin" };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -73,7 +138,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET
   }
   if (!resp.ok) {
     if (resp.status === 401) {
-      throw new ApiError("后端开启了访问鉴权（VR_API_KEY）：请在「接入 AI」页底部填写后端访问密钥", 401);
+      throw new ApiError("后端需要登录或访问密钥：请先登录，或在「接入 AI」页填写 VR_API_KEY", 401);
     }
     throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);
   }
@@ -257,6 +322,28 @@ export interface PortfolioData {
   updated: string; last_refresh: string | null;
 }
 
+export interface PaMasterAllocation {
+  symbol: string; asset_class: string; local_currency: string;
+  reporting_market_value: string | null; portfolio_weight: string | null;
+  reporting_unrealized_pnl: string | null; cost_status: string;
+}
+export interface PaMasterPosition {
+  account_ref: string; account_label: string; instrument_id: string | null; symbol: string; name: string;
+  asset_class: string; currency: string; venue: string | null; trade_agent_market: string | null;
+  quantity: string; average_cost: string | null; latest_price: string | null;
+  unrealized_pnl: string | null; cost_status: string;
+}
+export interface PaMasterPortfolio {
+  configured: boolean; status: "available" | "partial" | "disabled" | "unavailable";
+  detail?: string; source: "pa-master"; fetched_at?: string;
+  summary?: { reporting_currency: string | null; nav: string | null; reporting_coverage: string | null };
+  freshness?: {
+    last_positions_refreshed_at: string | null; last_history_refreshed_at: string | null;
+    last_full_refresh_completed_at: string | null;
+  };
+  allocations: PaMasterAllocation[]; positions: PaMasterPosition[];
+}
+
 // 资金面 / 筹码 / 信号（v3.3 并入，均为「用户查的那只股」的公开数据）
 export interface MarginRow { date: string; rzye: number; rzmre: number; rzche: number; rqye: number; rqmcl: number; rzrqye: number }
 export interface BlockTradeRow { date: string; price: number; close: number; premium_pct: number; vol: number; amount: number; buyer: string; seller: string }
@@ -331,6 +418,10 @@ export interface MarketHistoricalSeries {
   provider_symbol: string; range: string; interval: string; source: string;
   fetched_at: string; bars: MarketHistoricalBar[];
 }
+export interface AShareHistoricalBar {
+  date: string; open: number | null; high: number | null; low: number | null;
+  close: number | null; volume: number | null;
+}
 export interface MarketNewsItem {
   headline: string | null; summary: string | null; source: string | null;
   published_at: number | null; url: string | null; category: string | null;
@@ -376,6 +467,7 @@ export const api = {
   marketBars: (symbol: string, range = "1y", interval = "1d") => get<MarketHistoricalSeries>(
     `/market-data/bars?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`,
   ),
+  aShareBars: (code: string, offset = 240) => get<AShareHistoricalBar[]>(`/kline?code=${encodeURIComponent(code)}&category=4&offset=${offset}`),
   marketNews: (symbol: string, days = 30) => get<MarketNews>(
     `/market-data/news?symbol=${encodeURIComponent(symbol)}&days=${days}`,
   ),
@@ -388,6 +480,12 @@ export const api = {
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${encodeURIComponent(code)}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
+  paMasterPortfolio: () => get<PaMasterPortfolio>("/portfolio/pa-master"),
+  authSession: () => get<AuthSession>("/auth/session"),
+  authLogin: (username: string, password: string) => request<AuthSession>("/auth/login", "POST", { username, password }),
+  authLogout: () => request<{ authenticated: boolean }>("/auth/logout", "POST"),
+  realPositions: () => get<RealPositionSnapshot>("/positions/current"),
+  refreshRealPositions: (confirmEmpty = false) => request<RealPositionSnapshot>("/positions/refresh", "POST", { confirm_empty: confirmEmpty }),
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),
@@ -411,6 +509,9 @@ export const api = {
   investorQa: (code: string) => get<QaRow[]>(`/investor-qa?code=${code}`),
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   myReports: () => get<MyReport[]>("/myreports"),
+  researchSkills: () => get<ResearchSkillsResponse>("/research/skills"),
+  runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}) =>
+    request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters }),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),

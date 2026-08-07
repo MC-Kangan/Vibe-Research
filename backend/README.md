@@ -82,6 +82,23 @@ MCP 的 4 个工具是「零配置、开箱即用」的常用项。若 agent 需
 
 ## 合规
 
+## 真实持仓与浏览器登录
+
+设置 `VR_IBKR_FLEX_TOKEN` 和 `VR_IBKR_FLEX_QUERY_ID` 后，网页「我的持仓」的
+「从 IBKR 刷新」按钮会执行只读 Flex current-position 查询，并将规范化快照存到
+`VR_DATA_DIR`。刷新失败时会保留上一次有效快照；手工持仓记录仍使用原有本地存储。
+
+NAS 部署时建议启用 `VR_AUTH_ENABLED=true`、`VR_AUTH_USERNAME`、
+`VR_AUTH_PASSWORD_HASH` 和 `VR_SESSION_SECRET`。密码哈希可这样生成（不会把明文
+密码写入仓库）：
+
+```bash
+.venv/bin/python -c 'import getpass; from auth import hash_password; print(hash_password(getpass.getpass()))'
+```
+
+应用登录使用 HttpOnly 会话 Cookie；`VR_API_KEY` 仍可供脚本调用。远程访问应通过
+Tailscale Serve 暴露前端，不要直接开放 FastAPI、TradeAgent 或数据库端口。
+
 - 数据端点只返回客观行情/研报/财报/新闻，不含任何建议、排名、预测。
 - `/api/chat` 的 system prompt 内置中立红线：不荐股、不预测涨跌、不给买卖时机、不构成投资建议。
 - 分析结论一律由用户配置的模型 / agent 给出，本产品只提供数据与工具。

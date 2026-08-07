@@ -18,16 +18,31 @@ test("the existing markdown stack renders common AI response formatting", () => 
   assert.match(html, /<blockquote>/);
 });
 
-test("Ask AI renders assistant messages with the markdown stack", async () => {
+test("all AI markdown uses the consent-gated renderer", async () => {
+  const paths = [
+    "../src/components/ui/AskAiButton.tsx",
+    "../src/pages/Debate.tsx",
+    "../src/pages/Intel.tsx",
+    "../src/pages/DailyReview.tsx",
+    "../src/pages/Notes.tsx",
+  ];
+  for (const path of paths) {
+    const source = await readFile(new URL(path, import.meta.url), "utf8");
+    assert.match(source, /import \{ SafeMarkdown \} from "@\/components\/ui\/SafeMarkdown";/);
+    assert.doesNotMatch(source, /import ReactMarkdown from "react-markdown";/);
+  }
+});
+
+test("the shared markdown renderer requires consent before remote images load", async () => {
   const source = await readFile(
-    new URL("../src/components/ui/AskAiButton.tsx", import.meta.url),
+    new URL("../src/components/ui/SafeMarkdown.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(source, /import ReactMarkdown from "react-markdown";/);
+  assert.match(source, /import ReactMarkdown, \{ type Components \} from "react-markdown";/);
   assert.match(source, /import remarkGfm from "remark-gfm";/);
-  assert.match(
-    source,
-    /m\.role === "assistant"\s*\?\s*\(\s*<div className="prose[^"]*">\s*<ReactMarkdown remarkPlugins=\{\[remarkGfm\]\}>\{m\.content\}<\/ReactMarkdown>\s*<\/div>/s,
-  );
+  assert.match(source, /isRemoteImage/);
+  assert.match(source, /setApproved\(true\)/);
+  assert.match(source, /referrerPolicy="no-referrer"/);
+  assert.match(source, /components=\{MARKDOWN_COMPONENTS\}/);
 });

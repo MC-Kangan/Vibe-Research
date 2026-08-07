@@ -7,6 +7,8 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { api, ApiError, type PortfolioData } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { normalizeStockSymbol } from "@/lib/market-symbols";
+import { PaMasterPortfolioPanel } from "@/components/portfolio/PaMasterPortfolioPanel";
+import { RealPositionPanel } from "@/components/portfolio/RealPositionPanel";
 
 const REFRESH_MS = 30 * 60 * 1000; // 每半小时自动刷新
 const pnlColor = (v: number | null) => v != null && v > 0 ? "text-success" : v != null && v < 0 ? "text-danger" : "text-muted-foreground";
@@ -103,7 +105,7 @@ export function Portfolio() {
     <div>
       <PageHeader
         title="我的持仓"
-        subtitle="自己录、存在本地，实时看浮动盈亏"
+        subtitle="IBKR 实际持仓为主；手工记录仍保留在本地"
         actions={
           <div className="flex items-center gap-2">
             {holdings.length > 0 && (
@@ -121,8 +123,10 @@ export function Portfolio() {
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-        <span>持仓<b className="text-foreground">只存在你本地</b>，不上传、不进仓库。行情每半小时自动刷新，也可手动刷新。本产品不提供标的、不给建议，只帮你把自己的账理清楚。</span>
+        <span>真实持仓从 IBKR Flex 只读导入并存为本地快照；不会提交订单，也不会把原始 Flex 报文上传。手工持仓仍只存在本地。</span>
       </div>
+
+      <RealPositionPanel />
 
       {/* 汇总 */}
       {currencyTotals.length > 0 && holdings.length > 0 && (
@@ -221,6 +225,8 @@ export function Portfolio() {
           </div>
         )}
       </GlassCard>
+
+      <PaMasterPortfolioPanel />
 
       {/* 清仓录入 */}
       <GlassCard className="mb-4 mt-6">

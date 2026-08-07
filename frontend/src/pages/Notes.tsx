@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { Trash2, ChevronDown, ChevronRight, NotebookPen, ScanSearch, Save } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { SafeMarkdown } from "@/components/ui/SafeMarkdown";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
@@ -94,7 +93,7 @@ export function Notes() {
                 {open && (
                   <div className="border-t border-border/40 px-4 py-3">
                     <div className="prose prose-sm prose-invert max-w-none text-foreground">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{n.content}</ReactMarkdown>
+                      <SafeMarkdown>{n.content}</SafeMarkdown>
                     </div>
 
                     <div className="mt-3 flex items-center gap-2 border-t border-border/40 pt-3">
@@ -115,7 +114,7 @@ export function Notes() {
                         ) : (
                           <>
                             <div className="prose prose-sm prose-invert max-w-none text-foreground">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{reflectText}</ReactMarkdown>
+                              <SafeMarkdown>{reflectText}</SafeMarkdown>
                             </div>
                             {!reflecting && (
                               <button onClick={() => saveReflection(n)} disabled={reflectSaved}

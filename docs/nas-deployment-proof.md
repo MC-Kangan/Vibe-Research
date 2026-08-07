@@ -89,9 +89,30 @@ VR_WEB_PORT=8080
 VR_PUBLIC_ORIGIN=http://127.0.0.1:8080
 VR_DATA_PATH=/volume1/docker/vibe-research/data
 VR_API_KEY=
+VR_AUTH_ENABLED=true
+VR_AUTH_USERNAME=admin
+VR_AUTH_PASSWORD_HASH=<generated PBKDF2 hash>
+VR_SESSION_SECRET=<long random value>
+VR_SESSION_TTL_HOURS=12
+VR_AUTH_COOKIE_SECURE=true
+VR_IBKR_FLEX_TOKEN=<server-side IBKR Flex token>
+VR_IBKR_FLEX_QUERY_ID=<current-position Flex query id>
+VR_IBKR_FLEX_TIMEZONE=Europe/London
+VR_IBKR_FLEX_COOLDOWN_SECONDS=300
 ```
 
 Keep `VR_BIND_ADDRESS=127.0.0.1` until the authenticated Tailscale proxy is installed. Do not open router ports, use a DMZ rule, expose port 8900, or enable Tailscale Funnel.
+
+Install and sign in to Tailscale on the NAS and each approved device, then publish only
+the loopback frontend through Tailscale Serve (for example, `tailscale serve --bg
+http://127.0.0.1:8080`). Use the HTTPS tailnet URL shown by Tailscale. Do not publish the
+backend, TradeAgent, or database ports. The Vibe login screen remains enabled even inside
+the tailnet, so a stolen or shared tailnet device does not automatically expose positions.
+
+After the first login, open 我的持仓 and click 从 IBKR 刷新. This performs a read-only current
+Flex query and stores a normalized snapshot under the configured data directory. It does
+not import transactions or replace the existing manual portfolio records. Verify the
+position count, report date, quantities, and costs against IBKR before relying on the view.
 
 If the NAS Docker interface cannot consume Compose directly, use its project/Compose import function and select this repository's `compose.yaml`. Ensure the resulting frontend port binding remains loopback-only and the backend has no host port.
 
@@ -130,7 +151,9 @@ Rollback by checking out or restoring the previous source version and rebuilding
 
 ## Security boundary before remote access
 
-The deployment currently relies on network reachability, not human identity. `VR_API_KEY` remains available as a temporary service control but is not adequate remote-user authentication because it is a shared long-lived browser secret.
+The deployment now supports an application login with an expiring signed HttpOnly session
+cookie. `VR_API_KEY` remains available for scripts and service-to-service calls, but it is
+not the browser login mechanism.
 
 The next deployment slice should:
 
