@@ -137,6 +137,7 @@ export interface IbkrInstrument {
   instrument_key: string; account_ref: string; account_label: string; symbol: string; name: string;
   asset_class: string; currency: string; venue: string | null; status: "open" | "closed";
   quantity: number | null; average_cost: number | null;
+  provider_symbol: string | null; price_multiplier: number; mapping_source: string;
 }
 export interface IbkrExecution {
   trade_key: string; occurred_at: string; side: "BUY" | "SELL"; quantity: number; price: number | null;

@@ -35,14 +35,14 @@ export function Layout() {
   }, [collapsed]);
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-[100dvh] flex-col md:flex-row">
       {/* Sidebar */}
       <aside className={cn(
-        "glass z-10 m-2 flex shrink-0 flex-col rounded-2xl transition-all duration-200",
-        collapsed ? "w-14" : "w-60",
+        "glass z-10 order-2 mx-2 mb-2 flex h-16 w-auto shrink-0 flex-row rounded-2xl pb-[env(safe-area-inset-bottom)] transition-all duration-200 md:order-none md:m-2 md:h-auto md:flex-col md:pb-0",
+        collapsed ? "md:w-14" : "md:w-60",
       )}>
         {/* Brand */}
-        <div className={cn("border-b border-border/50", collapsed ? "flex justify-center p-3" : "p-4")}>
+        <div className={cn("hidden border-b border-border/50 md:block", collapsed ? "md:flex md:justify-center md:p-3" : "md:p-4")}>
           <Link to="/daily-review" className={cn("flex items-center", collapsed ? "justify-center" : "gap-2")}>
             <LineChart className="h-6 w-6 shrink-0 text-primary text-glow" />
             {!collapsed && (
@@ -55,7 +55,7 @@ export function Layout() {
         </div>
 
         {/* Nav */}
-        <nav className={cn("flex-1 space-y-1 overflow-auto", collapsed ? "p-1.5" : "p-2.5")}>
+        <nav className={cn("flex flex-1 items-center gap-1 overflow-x-auto p-1.5 md:block md:space-y-1 md:overflow-auto", collapsed ? "md:p-1.5" : "md:p-2.5")}>
           {NAV.map(({ to, icon: Icon, label }) => {
             const active = pathname === to;
             return (
@@ -64,15 +64,15 @@ export function Layout() {
                   to={to}
                   title={collapsed ? label : undefined}
                   className={cn(
-                    "flex items-center rounded-lg text-sm transition-colors",
-                    collapsed ? "justify-center p-2.5" : "gap-2.5 px-3 py-2.5",
+                    "flex shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-2 py-1 text-[10px] transition-colors md:flex-row md:text-sm",
+                    collapsed ? "md:p-2.5" : "md:justify-start md:gap-2.5 md:px-3 md:py-2.5",
                     active
                       ? "bg-primary/15 font-medium text-primary shadow-glow"
                       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && label}
+                  <span className={cn(collapsed && "md:hidden")}>{label}</span>
                 </Link>
 
               </div>
@@ -81,7 +81,7 @@ export function Layout() {
         </nav>
 
         {/* Footer */}
-        <div className={cn("border-t border-border/50", collapsed ? "flex flex-col items-center gap-2 p-2" : "space-y-2 p-3")}>
+        <div className={cn("hidden border-t border-border/50 md:block", collapsed ? "md:flex md:flex-col md:items-center md:gap-2 md:p-2" : "md:space-y-2 md:p-3")}>
           {collapsed ? (
             <>
               <button onClick={toggle} className="rounded p-1.5 text-muted-foreground transition-colors hover:text-foreground" title={dark ? "亮色" : "暗色"}>
@@ -116,8 +116,8 @@ export function Layout() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-6xl px-6 py-6">
+      <main className="order-1 min-h-0 w-full flex-1 overflow-auto md:order-none">
+        <div className="mx-auto max-w-6xl px-3 py-4 sm:px-4 md:px-6 md:py-6">
           <Outlet />
         </div>
       </main>

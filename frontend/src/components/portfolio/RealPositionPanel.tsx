@@ -106,8 +106,15 @@ export function RealPositionPanel({ preferences }: { preferences: string[] }) {
       weight: grossExposure ? Math.abs(item.reporting_market_value || 0) / grossExposure : null,
     }));
   }, [positions]);
-  const aiContext = `${investmentProfileContext(preferences)}\n\n${data?.status === "available"
-    ? `我的真实 IBKR 持仓（只在用户点击后发送）：\n${positions.map((item) => `${item.name}(${item.symbol}) 数量${portfolioAiNumber(item.quantity)} 成本${portfolioAiNumber(item.average_cost)}(${sourceLabel(item.cost_status)}) 现价${portfolioAiNumber(item.latest_price)} 浮盈${portfolioAiNumber(item.unrealized_pnl)}(${sourceLabel(item.pnl_status)}) ${item.currency}`).join("\n")}`
+  const instrumentByPosition = useMemo(() => new Map(instruments.map((item) => [
+    [item.account_ref, item.symbol, item.currency, item.venue || ""].join("|"),
+    item,
+  ])), [instruments]);
+  const aiContext = `${investmentProfileContext(preferences)}\n\n行情校验规则：同名证券在不同交易所可能是不同产品。查询实时价格时必须使用下方“行情代码”，并同时核对交易所与币种；不得用裸 IBKR 代码替代。\n\n${data?.status === "available"
+    ? `我的真实 IBKR 持仓（只在用户点击后发送）：\n${positions.map((item) => {
+      const instrument = instrumentByPosition.get([item.account_ref, item.symbol, item.currency, item.venue || ""].join("|"));
+      return `${item.name} IBKR代码${item.symbol} 行情代码${instrument?.provider_symbol || "未映射"} 交易所${item.venue || "未提供"} 币种${item.currency} 数量${portfolioAiNumber(item.quantity)} 成本${portfolioAiNumber(item.average_cost)}(${sourceLabel(item.cost_status)}) IBKR标记价${portfolioAiNumber(item.latest_price)} 浮盈${portfolioAiNumber(item.unrealized_pnl)}(${sourceLabel(item.pnl_status)})`;
+    }).join("\n")}`
     : "真实 IBKR 持仓尚未加载。"}\n\n${portfolioAiInstruction}`;
 
   const refreshAll = async () => {
@@ -130,10 +137,10 @@ export function RealPositionPanel({ preferences }: { preferences: string[] }) {
   return <GlassCard className="mb-5" glow>
     <div className="mb-4 flex flex-wrap items-start gap-3">
       <div><h2 className="flex items-center gap-2 text-lg font-bold"><ShieldCheck className="h-5 w-5 text-primary" />真实持仓（IBKR Flex）</h2><p className="mt-1 text-xs text-muted-foreground">Vibe Research 本地快照；刷新是只读 IBKR 查询，不提交订单。</p></div>
-      <div className="ml-auto flex items-center gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
         {data?.status === "available" && <AskAiButton context={aiContext} label="让 AI 看真实持仓" suggestions={["我的持仓集中在哪些方向", "结构上有什么风险", "帮我梳理一下"]} />}
-        <button onClick={refresh} disabled={loading || activeJob} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">{loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}仅刷新当前</button>
-        <button onClick={refreshAll} disabled={loading || activeJob} className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary hover:bg-primary/15 disabled:opacity-50">{activeJob ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}刷新当前 + 历史</button>
+        <button onClick={refreshAll} disabled={loading || activeJob} title="更新当前持仓、历史 P&L 与交易点位" className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/25 disabled:opacity-50">{activeJob ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{activeJob ? "同步中" : "同步 IBKR"}</button>
+        <button onClick={refresh} disabled={loading || activeJob} title="仅更新当前持仓快照，不查询历史 P&L" className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">{loading && !activeJob ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}仅更新持仓</button>
       </div>
     </div>
     {error && <p className="mb-3 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning"><AlertCircle className="h-4 w-4" />{error}</p>}
@@ -183,23 +190,33 @@ function IbkrAnalyticsView({
     const averageCost = chart.instrument.average_cost;
     const buy = chart.executions.filter((item) => item.side === "BUY").map((item) => [item.occurred_at.slice(0, 10), item.price, item.quantity]);
     const sell = chart.executions.filter((item) => item.side === "SELL").map((item) => [item.occurred_at.slice(0, 10), item.price, item.quantity]);
+    const volumeMillions = bars.map((bar) => (bar.volume || 0) / 1_000_000);
     const sma = closes.map((_, index) => { const values = closes.slice(Math.max(0, index - 19), index + 1); return values.reduce((sum, value) => sum + value, 0) / values.length; });
+    const chartGrid = (compact: boolean) => compact
+      ? [{ left: 42, right: 14, top: 54, height: "54%" }, { left: 42, right: 14, top: "76%", height: "13%" }]
+      : [{ left: 58, right: 76, top: 40, height: "58%" }, { left: 58, right: 76, top: "76%", height: "14%" }];
+    const compact = chartHost.current.clientWidth < 520;
     instance.setOption({
       animation: false, tooltip: { trigger: "axis", axisPointer: { type: "cross" }, valueFormatter: chartValue },
-      legend: { data: ["价格", "SMA20", "成交量", "买入", "卖出"], textStyle: { color: "#94a3b8" } },
-      grid: [{ left: 52, right: 18, top: 40, height: "58%" }, { left: 52, right: 18, top: "76%", height: "14%" }],
+      legend: { type: "scroll", left: compact ? 0 : "center", right: compact ? 0 : undefined, data: ["价格", "SMA20", "成交量（百万）", "买入", "卖出"], textStyle: { color: "#94a3b8" } },
+      grid: chartGrid(compact),
       xAxis: [{ type: "category", data: dates, axisLabel: { color: "#94a3b8", hideOverlap: true } }, { type: "category", gridIndex: 1, data: dates, axisLabel: { show: false } }],
-      yAxis: [{ scale: true, axisLabel: { color: "#94a3b8", formatter: (value: number) => portfolioNumber(value) }, splitLine: { lineStyle: { color: "rgba(148,163,184,.12)" } } }, { gridIndex: 1, scale: true, axisLabel: { color: "#94a3b8", formatter: (value: number) => portfolioNumber(value) } }],
+      yAxis: [{ scale: true, axisLabel: { color: "#94a3b8", formatter: (value: number) => portfolioNumber(value) }, splitLine: { lineStyle: { color: "rgba(148,163,184,.12)" } } }, { gridIndex: 1, scale: true, name: "百万", nameTextStyle: { color: "#64748b", fontSize: 10 }, axisLabel: { color: "#94a3b8", formatter: (value: number) => `${portfolioNumber(value)}M` } }],
       dataZoom: [{ type: "inside", xAxisIndex: [0, 1] }, { type: "slider", xAxisIndex: [0, 1], bottom: 0, height: 18 }],
       series: [
-        { name: "价格", type: "candlestick", data: bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]), itemStyle: { color: "#ef4444", color0: "#22c55e", borderColor: "#ef4444", borderColor0: "#22c55e" }, markLine: averageCost != null ? { symbol: "none", data: [{ yAxis: averageCost, lineStyle: { color: "#f59e0b", type: "dashed" }, label: { formatter: `成本 ${portfolioNumber(averageCost)}` } }] } : undefined },
+        { name: "价格", type: "candlestick", data: bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]), itemStyle: { color: "#22c55e", color0: "#ef4444", borderColor: "#22c55e", borderColor0: "#ef4444" }, markLine: averageCost != null ? { symbol: "none", data: [{ yAxis: averageCost, lineStyle: { color: "#f59e0b", type: "dashed", width: 1.5 }, label: { position: "insideEndTop", distance: 6, formatter: `成本 ${portfolioNumber(averageCost)}`, color: "#fbbf24", backgroundColor: "rgba(15,23,42,.88)", borderRadius: 3, padding: [3, 5] } }] } : undefined },
         { name: "SMA20", type: "line", showSymbol: false, data: sma, lineStyle: { color: "#60a5fa" } },
-        { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: bars.map((bar) => bar.volume), itemStyle: { color: "rgba(243,93,43,.4)" } },
-        { name: "买入", type: "scatter", data: buy, symbol: "triangle", symbolSize: 10, itemStyle: { color: "#22c55e" } },
-        { name: "卖出", type: "scatter", data: sell, symbol: "pin", symbolSize: 11, itemStyle: { color: "#ef4444" } },
+        { name: "成交量（百万）", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: volumeMillions, itemStyle: { color: "rgba(148,163,184,.48)" } },
+        { name: "买入", type: "scatter", data: buy, symbol: "path://M0,-8 L8,8 L-8,8 Z", symbolSize: 15, itemStyle: { color: "#14b8a6", borderColor: "#ccfbf1", borderWidth: 2 } },
+        { name: "卖出", type: "scatter", data: sell, symbol: "path://M0,8 L8,-8 L-8,-8 Z", symbolSize: 15, itemStyle: { color: "#f97316", borderColor: "#ffedd5", borderWidth: 2 } },
       ],
     });
-    const resize = () => instance.resize(); window.addEventListener("resize", resize);
+    const resize = () => {
+      const nextCompact = (chartHost.current?.clientWidth || 0) < 520;
+      instance.setOption({ grid: chartGrid(nextCompact), legend: { left: nextCompact ? 0 : "center", right: nextCompact ? 0 : undefined } });
+      instance.resize();
+    };
+    window.addEventListener("resize", resize);
     return () => { window.removeEventListener("resize", resize); instance.dispose(); };
   }, [chart]);
 
@@ -216,6 +233,6 @@ function IbkrAnalyticsView({
     </>}
     {instruments.length > 0 && <div className="mt-5"><h4 className="mb-2 text-sm font-semibold">Position deep dive</h4><div className="flex flex-wrap gap-2">{instruments.map((item) => <button key={item.instrument_key} onClick={() => onSelect(item.instrument_key)} className={`rounded-lg border px-3 py-2 text-left text-xs ${selectedKey === item.instrument_key ? "border-primary bg-primary/10 text-primary" : "border-border/60 text-muted-foreground"}`}><span className="font-mono font-semibold">{item.symbol}</span><span className="ml-2">{item.status} · {fmt(item.quantity)}</span></button>)}</div></div>}
     {chartError && <p className="mt-3 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning">{chartError}</p>}
-    {chart && <div className="mt-4 rounded-lg border border-border/60 p-3"><div className="flex flex-wrap items-center gap-2"><div><p className="font-semibold">{chart.instrument.name} <span className="font-mono text-xs text-muted-foreground">{chart.instrument.symbol}</span></p><p className="text-xs text-muted-foreground">{chart.provider_symbol || "未映射"} · {chart.mapping_source}</p></div><div className="ml-auto flex items-center gap-2"><input value={mapping} onChange={(event) => setMapping(event.target.value)} placeholder="Yahoo symbol，如 VOD.L" className="w-40 rounded border border-border bg-background px-2 py-1 text-xs" /><input value={multiplier} onChange={(event) => setMultiplier(event.target.value)} className="w-14 rounded border border-border bg-background px-2 py-1 text-xs" title="价格倍数" /><button onClick={onSaveMapping} className="rounded bg-primary/15 px-2 py-1 text-xs text-primary">保存映射</button></div></div><div className="mt-3 flex flex-wrap items-center gap-1 border-t border-border/40 pt-3"><span className="mr-1 text-xs text-muted-foreground">图表区间</span>{["1m", "3m", "ytd", "1y", "2y", "all"].map((item) => <button key={item} onClick={() => onRange(item)} className={`rounded px-2 py-1 text-xs ${range === item ? "bg-primary/15 text-primary" : "bg-muted/40 text-muted-foreground"}`}>{item.toUpperCase()}</button>)}</div>{chart.bars.length ? <div ref={chartHost} className="mt-2 h-[430px] w-full" role="img" aria-label="IBKR position price chart with executions" /> : <p className="py-8 text-center text-sm text-muted-foreground">暂无行情数据</p>}{chart.warnings.length > 0 && <p className="mt-2 text-xs text-warning">{chart.warnings.join("；")}</p>}</div>}
+    {chart && <div className="mt-4 rounded-lg border border-border/60 p-3"><div className="flex flex-wrap items-center gap-2"><div><p className="font-semibold">{chart.instrument.name} <span className="font-mono text-xs text-muted-foreground">{chart.instrument.symbol}</span></p><p className="text-xs text-muted-foreground">{chart.provider_symbol || "未映射"} · {chart.mapping_source}</p></div><div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto"><input value={mapping} onChange={(event) => setMapping(event.target.value)} placeholder="Yahoo symbol，如 VOD.L" className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs sm:w-40 sm:flex-none" /><input value={multiplier} onChange={(event) => setMultiplier(event.target.value)} className="w-14 rounded border border-border bg-background px-2 py-1 text-xs" title="价格倍数" /><button onClick={onSaveMapping} className="rounded bg-primary/15 px-2 py-1 text-xs text-primary">保存映射</button></div></div><div className="mt-3 flex flex-wrap items-center gap-1 border-t border-border/40 pt-3"><span className="mr-1 text-xs text-muted-foreground">图表区间</span>{["1m", "3m", "ytd", "1y", "2y", "all"].map((item) => <button key={item} onClick={() => onRange(item)} className={`rounded px-2 py-1 text-xs ${range === item ? "bg-primary/15 text-primary" : "bg-muted/40 text-muted-foreground"}`}>{item.toUpperCase()}</button>)}</div>{chart.bars.length ? <div ref={chartHost} className="mt-2 h-[360px] w-full sm:h-[430px]" role="img" aria-label="IBKR position price chart with executions" /> : <p className="py-8 text-center text-sm text-muted-foreground">暂无行情数据</p>}{chart.warnings.length > 0 && <p className="mt-2 text-xs text-warning">{chart.warnings.join("；")}</p>}</div>}
   </div>;
 }

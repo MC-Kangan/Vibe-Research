@@ -72,6 +72,30 @@ def test_chart_applies_mapping_multiplier_and_range(monkeypatch, tmp_path: Path)
     assert result["executions"][0]["price"] == 100.0
 
 
+def test_instruments_expose_exchange_aware_provider_symbols(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
+    monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))
+    root = position_service.ElementTree.fromstring(
+        """
+        <FlexQueryResponse>
+          <FlexStatement accountId="U1" currency="GBP"/>
+          <OpenPosition accountId="U1" symbol="SMH" description="VanEck Semiconductor ETF" assetCategory="STK"
+            currency="USD" listingExchange="LSEETF" position="2" avgCost="100" markPrice="108" positionValue="216" fxRateToBase="0.75"/>
+        </FlexQueryResponse>
+        """
+    )
+    position_service.refresh_from_root(root)
+
+    instrument = analytics.list_instruments("open")[0]
+    assert instrument["provider_symbol"] == "SMH.L"
+    assert instrument["mapping_source"] == "auto"
+
+    analytics.save_mapping(instrument["instrument_key"], "SMH-GB", 1.0)
+    remapped = analytics.list_instruments("open")[0]
+    assert remapped["provider_symbol"] == "SMH-GB"
+    assert remapped["mapping_source"] == "manual"
+
+
 def test_symbol_summary_is_not_misreported_as_mtm_contributor(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
     monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))

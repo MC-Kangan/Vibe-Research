@@ -616,6 +616,9 @@ def list_instruments(status: str = "all") -> list[dict[str, Any]]:
                  SUM(CASE WHEN side = 'BUY' THEN quantity ELSE 0 END) AS buy_quantity
                FROM ibkr_trades GROUP BY instrument_key"""
         ).fetchall()
+        mappings = db.execute(
+            "SELECT instrument_key, provider_symbol, price_multiplier, mapping_source FROM ibkr_instruments"
+        ).fetchall()
     weighted_cost = {
         row["instrument_key"]: (float(row["buy_value"]) / float(row["buy_quantity"]))
         for row in trade_costs
@@ -626,6 +629,13 @@ def list_instruments(status: str = "all") -> list[dict[str, Any]]:
     for key, item in by_key.items():
         if item.get("average_cost") is None and key in weighted_cost:
             item["average_cost"] = weighted_cost[key]
+    mapping_by_key = {row["instrument_key"]: row for row in mappings}
+    for key, item in by_key.items():
+        stored = mapping_by_key.get(key)
+        stored_symbol = stored["provider_symbol"] if stored else None
+        item["provider_symbol"] = stored_symbol or _auto_symbol(item["symbol"], item.get("venue"))
+        item["price_multiplier"] = float(stored["price_multiplier"] if stored else 1.0)
+        item["mapping_source"] = stored["mapping_source"] if stored_symbol else "auto"
     result = list(by_key.values())
     if status in {"open", "closed"}:
         result = [row for row in result if row["status"] == status]
