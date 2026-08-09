@@ -125,14 +125,92 @@ Vibe-Research/
 
 ## Quick Start
 
-```bash
-# Backend (:8900)
-cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8900
+### Option A: local all-in-one launcher
 
-# Frontend (:5899)
-cd frontend && npm install && npm run dev
-# Open http://localhost:5899
+With `TradeAgent` and `VibeResearch` checked out as sibling directories and
+their virtual environments installed:
+
+```bash
+cd /Users/chenkangan/Documents/VibeResearch
+bash scripts/start-local-stack.sh
+```
+
+Open <http://127.0.0.1:5899>. Press `Ctrl-C` in the launcher terminal to stop
+all services. To use real read-only positions locally, create the Git-ignored
+`.env.local` file (preferred; the launcher also falls back to the root `.env`):
+
+```bash
+export VR_IBKR_FLEX_TOKEN='your_flex_token'
+export VR_IBKR_FLEX_QUERY_ID='your_positions_query_id'
+export VR_IBKR_FLEX_HISTORY_QUERY_ID='your_history_query_id'
+export VR_IBKR_FLEX_TIMEZONE='Europe/London'
+export VR_IBKR_FLEX_COOLDOWN_SECONDS='300'
+export VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS='5'
+```
+
+The launcher passes the settings to Vibe's direct IBKR holdings and analytics
+panel. The history query is optional; when configured, “Refresh current +
+history” normally spaces the two reports by 5 seconds. If IBKR reports statement
+generation (1001/1019) or pacing (1018), Vibe waits 15 or 60 seconds and retries
+once. A successful normal refresh therefore has no fixed one-minute wait. No orders are submitted.
+Local snapshots and the analytics ledger persist under `~/.vibe-research` by
+default. If the launcher falls back to a Docker-oriented `.env`, container-only
+`/data` paths are safely replaced; use `VIBE_LOCAL_DATA_DIR` to override this.
+
+The launcher prints the exact `vibe-backend.log` path. IBKR diagnostics record
+only the request stage, HTTP metadata, response size/fingerprint, and retry
+count—never the token, query ID, account IDs, or raw statement. Error `1001`
+is retried with backoff while preserving the last valid snapshot; `1018` means
+the pacing cooldown must elapse before another refresh.
+
+To inspect Flex queries without writing the Vibe snapshot, make sure no app
+refresh is running and use:
+
+```bash
+bash scripts/test-ibkr-flex.sh current
+bash scripts/test-ibkr-flex.sh history
+# Or inspect both with the pacing delay applied automatically:
+bash scripts/test-ibkr-flex.sh all
+```
+
+The command prints only section counts, report dates, and a sanitized response
+shape. A current query needs `OpenPosition`; historical analytics need
+`ChangeInNAV`, `MTMPerformanceSummaryUnderlying`, and `Trade`.
+
+### Option B: Docker Compose
+
+Create a Git-ignored `.env` beside `compose.yaml` with the same
+`VR_IBKR_FLEX_*` values, then run:
+
+```bash
+cd /Users/chenkangan/Documents/VibeResearch
+docker compose up -d --build backend frontend
+```
+
+Open <http://127.0.0.1:8080>. Use `docker compose ps`,
+`docker compose logs -f backend`, and `docker compose down` for operations.
+To start the optional TradeAgent research service, first build the sibling repo
+and enable the bridge in `.env`:
+
+```bash
+docker build -t trade-research:latest ../TradeAgent
+# Set VR_TRADE_RESEARCH_ENABLED=true and VR_TRADE_RESEARCH_API_TOKEN in .env
+COMPOSE_PROFILES=research docker compose up -d --build
+```
+
+The same `VR_TRADE_RESEARCH_API_TOKEN` is passed to both services. Do not run
+the local launcher and Compose simultaneously.
+
+### Manual two-process mode
+
+For a minimal setup, source `.env.local` (if used) in two terminals:
+
+```bash
+# terminal 1
+cd backend && .venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8900
+
+# terminal 2
+cd frontend && npm install && npm run dev -- --host 127.0.0.1 --port 5899
 ```
 
 ## Bring Your Own AI

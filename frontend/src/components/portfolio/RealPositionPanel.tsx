@@ -1,19 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as echarts from "echarts";
+import { AlertCircle, BarChart3, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { ApiError, api, type RealPositionSnapshot } from "@/lib/api";
+import { ApiError, api, type IbkrAnalytics, type IbkrInstrument, type IbkrPositionChart, type IbkrRefreshStatus, type RealPositionSnapshot } from "@/lib/api";
+import { investmentProfileContext, portfolioAiInstruction, portfolioAiNumber, portfolioNumber, portfolioRatioPercent, portfolioSigned } from "@/lib/portfolio-format";
 
-const numberValue = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? null : value;
-const fmt = (value: number | null | undefined, digits = 2) => numberValue(value)?.toLocaleString("zh-CN", { maximumFractionDigits: digits }) || "—";
-const signed = (value: number | null | undefined) => numberValue(value) == null ? "—" : `${value! > 0 ? "+" : ""}${fmt(value)}`;
+const fmt = portfolioNumber;
+const signed = portfolioSigned;
 const pnlClass = (value: number | null | undefined) => value == null ? "text-muted-foreground" : value > 0 ? "text-success" : value < 0 ? "text-danger" : "text-muted-foreground";
-const percent = (value: number | null | undefined) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+const percent = portfolioRatioPercent;
+const sourceLabel = (status: string) => status === "broker" ? "IBKR" : status === "trade_reconstructed" ? "交易重建" : "不可用";
+const chartValue = (value: unknown): string => Array.isArray(value)
+  ? value.map((item) => typeof item === "number" ? portfolioNumber(item) : String(item)).join(", ")
+  : typeof value === "number" ? portfolioNumber(value) : String(value ?? "—");
 
-export function RealPositionPanel() {
+export function RealPositionPanel({ preferences }: { preferences: string[] }) {
   const [data, setData] = useState<RealPositionSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [analytics, setAnalytics] = useState<IbkrAnalytics | null>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [range, setRange] = useState("3m");
+  const [instruments, setInstruments] = useState<IbkrInstrument[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [chart, setChart] = useState<IbkrPositionChart | null>(null);
+  const [chartError, setChartError] = useState<string | null>(null);
+  const [job, setJob] = useState<IbkrRefreshStatus | null>(null);
+  const [mapping, setMapping] = useState("");
+  const [multiplier, setMultiplier] = useState("1");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -22,7 +37,49 @@ export function RealPositionPanel() {
     finally { setLoading(false); }
   }, []);
 
+  const loadAnalytics = useCallback(async (selectedRange = range) => {
+    try {
+      const [summary, list] = await Promise.all([api.positionAnalytics(selectedRange), api.positionInstruments()]);
+      setAnalytics(summary); setInstruments(list);
+      setAnalyticsError(null);
+      setSelectedKey((current) => current ?? list[0]?.instrument_key ?? null);
+    } catch (reason) {
+      setAnalyticsError(reason instanceof ApiError ? reason.message : "IBKR 组合分析加载失败");
+    }
+  }, [range]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
+
+  useEffect(() => {
+    if (!selectedKey) { setChart(null); setChartError(null); return; }
+    let cancelled = false;
+    api.positionChart(selectedKey, range).then((payload) => {
+      if (cancelled) return;
+      setChart(payload); setChartError(null);
+      setMapping(payload.provider_symbol || "");
+      setMultiplier(String(payload.price_multiplier || 1));
+    }).catch((reason: unknown) => {
+      if (cancelled) return;
+      setChart(null);
+      setChartError(reason instanceof ApiError ? reason.message : "持仓图表加载失败");
+    });
+    return () => { cancelled = true; };
+  }, [selectedKey, range]);
+
+  useEffect(() => {
+    if (!job || !["queued", "running"].includes(job.status)) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await api.positionRefreshStatus(job.job_id || undefined);
+        setJob(next);
+        if (["complete", "partial"].includes(next.status)) { await load(); await loadAnalytics(); }
+      } catch (reason) {
+        setError(reason instanceof ApiError ? reason.message : "IBKR 刷新状态加载失败");
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [job, load, loadAnalytics]);
 
   const refresh = async () => {
     setLoading(true); setError(null);
@@ -49,16 +106,34 @@ export function RealPositionPanel() {
       weight: grossExposure ? Math.abs(item.reporting_market_value || 0) / grossExposure : null,
     }));
   }, [positions]);
-  const aiContext = data?.status === "available"
-    ? `我的真实 IBKR 持仓（只在用户点击后发送）：\n${positions.map((item) => `${item.name}(${item.symbol}) 数量${item.quantity ?? "—"} 成本${item.average_cost ?? "—"} 现价${item.latest_price ?? "—"} 浮盈${item.unrealized_pnl ?? "—"} ${item.currency}`).join("\n")}`
-    : "真实 IBKR 持仓尚未加载。";
+  const aiContext = `${investmentProfileContext(preferences)}\n\n${data?.status === "available"
+    ? `我的真实 IBKR 持仓（只在用户点击后发送）：\n${positions.map((item) => `${item.name}(${item.symbol}) 数量${portfolioAiNumber(item.quantity)} 成本${portfolioAiNumber(item.average_cost)}(${sourceLabel(item.cost_status)}) 现价${portfolioAiNumber(item.latest_price)} 浮盈${portfolioAiNumber(item.unrealized_pnl)}(${sourceLabel(item.pnl_status)}) ${item.currency}`).join("\n")}`
+    : "真实 IBKR 持仓尚未加载。"}\n\n${portfolioAiInstruction}`;
+
+  const refreshAll = async () => {
+    setLoading(true); setError(null);
+    try { setJob(await api.refreshAllPositions()); }
+    catch (reason) { setError(reason instanceof ApiError ? reason.message : "IBKR 刷新失败"); }
+    finally { setLoading(false); }
+  };
+
+  const saveMapping = async () => {
+    if (!selectedKey || !mapping.trim()) return;
+    try {
+      await api.savePositionMapping(selectedKey, mapping, Number(multiplier) || 1);
+      const payload = await api.positionChart(selectedKey, range);
+      setChart(payload); setChartError(null);
+    } catch (reason) { setError(reason instanceof ApiError ? reason.message : "保存行情映射失败"); }
+  };
+  const activeJob = Boolean(job && ["queued", "running"].includes(job.status));
 
   return <GlassCard className="mb-5" glow>
     <div className="mb-4 flex flex-wrap items-start gap-3">
       <div><h2 className="flex items-center gap-2 text-lg font-bold"><ShieldCheck className="h-5 w-5 text-primary" />真实持仓（IBKR Flex）</h2><p className="mt-1 text-xs text-muted-foreground">Vibe Research 本地快照；刷新是只读 IBKR 查询，不提交订单。</p></div>
       <div className="ml-auto flex items-center gap-2">
         {data?.status === "available" && <AskAiButton context={aiContext} label="让 AI 看真实持仓" suggestions={["我的持仓集中在哪些方向", "结构上有什么风险", "帮我梳理一下"]} />}
-        <button onClick={refresh} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">{loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}从 IBKR 刷新</button>
+        <button onClick={refresh} disabled={loading || activeJob} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">{loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}仅刷新当前</button>
+        <button onClick={refreshAll} disabled={loading || activeJob} className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary hover:bg-primary/15 disabled:opacity-50">{activeJob ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}刷新当前 + 历史</button>
       </div>
     </div>
     {error && <p className="mb-3 flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning"><AlertCircle className="h-4 w-4" />{error}</p>}
@@ -81,9 +156,66 @@ export function RealPositionPanel() {
           {allocations.map((item, index) => <span key={`${item.account_ref}-${item.symbol}-${index}`}>{item.exposureSide} · {item.symbol} {percent(item.weight)}</span>)}
         </div>
       </div>}
-      <div className="mt-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-border/50 text-left text-xs text-muted-foreground">{["账户", "名称", "数量", "成本", "IBKR标记", "折算市值", "未实现盈亏（本币）", "本币 / 交易所"].map((heading) => <th key={heading} className="whitespace-nowrap px-2 py-2 font-medium">{heading}</th>)}</tr></thead><tbody>{positions.map((item) => <tr key={`${item.account_ref}-${item.symbol}`} className="border-b border-border/30"><td className="px-2 py-2 text-xs text-muted-foreground">{item.account_label}</td><td className="px-2 py-2"><span className="font-medium">{item.name}</span><span className="ml-1.5 font-mono text-xs text-muted-foreground/60">{item.symbol}</span></td><td className="px-2 py-2 font-mono">{fmt(item.quantity)}</td><td className="px-2 py-2 font-mono">{fmt(item.average_cost, 4)}</td><td className="px-2 py-2 font-mono">{fmt(item.latest_price, 4)}</td><td className="px-2 py-2 font-mono">{fmt(item.reporting_market_value ?? item.market_value)} <span className="text-[10px] text-muted-foreground">{item.reporting_currency || item.currency}</span></td><td className={`px-2 py-2 font-mono ${pnlClass(item.unrealized_pnl)}`}>{signed(item.unrealized_pnl)}</td><td className="px-2 py-2 text-xs text-muted-foreground">{item.currency}{item.venue ? ` · ${item.venue}` : ""}</td></tr>)}</tbody></table></div>
+      <div className="mt-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-border/50 text-left text-xs text-muted-foreground">{["账户", "名称", "数量", "成本 / 来源", "IBKR标记", "折算市值", "未实现盈亏 / 来源", "本币 / 交易所"].map((heading) => <th key={heading} className="whitespace-nowrap px-2 py-2 font-medium">{heading}</th>)}</tr></thead><tbody>{positions.map((item) => <tr key={`${item.account_ref}-${item.symbol}`} className="border-b border-border/30"><td className="px-2 py-2 text-xs text-muted-foreground">{item.account_label}</td><td className="px-2 py-2"><span className="font-medium">{item.name}</span><span className="ml-1.5 font-mono text-xs text-muted-foreground/60">{item.symbol}</span></td><td className="px-2 py-2 font-mono">{fmt(item.quantity)}</td><td className="px-2 py-2"><span className="font-mono">{fmt(item.average_cost)}</span><span className="ml-1.5 text-[10px] text-muted-foreground">{sourceLabel(item.cost_status)}</span></td><td className="px-2 py-2 font-mono">{fmt(item.latest_price)}</td><td className="px-2 py-2 font-mono">{fmt(item.reporting_market_value ?? item.market_value)} <span className="text-[10px] text-muted-foreground">{item.reporting_currency || item.currency}</span></td><td className={`px-2 py-2 ${pnlClass(item.unrealized_pnl)}`}><span className="font-mono">{signed(item.unrealized_pnl)}</span><span className="ml-1.5 text-[10px] text-muted-foreground">{sourceLabel(item.pnl_status)}</span></td><td className="px-2 py-2 text-xs text-muted-foreground">{item.currency}{item.venue ? ` · ${item.venue}` : ""}</td></tr>)}</tbody></table></div>
       {data.warnings.length > 0 && <p className="mt-3 text-xs text-warning">{data.warnings.join("；")}</p>}
       <p className="mt-3 text-[11px] text-muted-foreground/60">最后刷新：{data.refreshed_at ? new Date(data.refreshed_at).toLocaleString("zh-CN") : "—"} · 数据源：IBKR Flex</p>
     </>}
+    {job && <p className="mt-3 text-xs text-muted-foreground">刷新任务：{job.status} · 当前持仓 {job.positions_status} · 历史 P&amp;L {job.history_status}{job.error_message ? ` · ${job.error_message}` : ""}</p>}
+    <IbkrAnalyticsView analytics={analytics} analyticsError={analyticsError} chartError={chartError} instruments={instruments} selectedKey={selectedKey} onSelect={setSelectedKey} range={range} onRange={setRange} chart={chart} mapping={mapping} setMapping={setMapping} multiplier={multiplier} setMultiplier={setMultiplier} onSaveMapping={saveMapping} />
   </GlassCard>;
+}
+
+function IbkrAnalyticsView({
+  analytics, analyticsError, chartError, instruments, selectedKey, onSelect, range, onRange, chart, mapping, setMapping, multiplier, setMultiplier, onSaveMapping,
+}: {
+  analytics: IbkrAnalytics | null; instruments: IbkrInstrument[]; selectedKey: string | null; onSelect: (key: string) => void;
+  analyticsError: string | null; chartError: string | null;
+  range: string; onRange: (range: string) => void; chart: IbkrPositionChart | null; mapping: string;
+  setMapping: (value: string) => void; multiplier: string; setMultiplier: (value: string) => void; onSaveMapping: () => void;
+}) {
+  const chartHost = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!chartHost.current || !chart?.bars.length) return;
+    const instance = echarts.init(chartHost.current);
+    const bars = chart.bars.filter((bar) => bar.open != null && bar.close != null && bar.low != null && bar.high != null);
+    const dates = bars.map((bar) => bar.date);
+    const closes = bars.map((bar) => bar.close as number);
+    const averageCost = chart.instrument.average_cost;
+    const buy = chart.executions.filter((item) => item.side === "BUY").map((item) => [item.occurred_at.slice(0, 10), item.price, item.quantity]);
+    const sell = chart.executions.filter((item) => item.side === "SELL").map((item) => [item.occurred_at.slice(0, 10), item.price, item.quantity]);
+    const sma = closes.map((_, index) => { const values = closes.slice(Math.max(0, index - 19), index + 1); return values.reduce((sum, value) => sum + value, 0) / values.length; });
+    instance.setOption({
+      animation: false, tooltip: { trigger: "axis", axisPointer: { type: "cross" }, valueFormatter: chartValue },
+      legend: { data: ["价格", "SMA20", "成交量", "买入", "卖出"], textStyle: { color: "#94a3b8" } },
+      grid: [{ left: 52, right: 18, top: 40, height: "58%" }, { left: 52, right: 18, top: "76%", height: "14%" }],
+      xAxis: [{ type: "category", data: dates, axisLabel: { color: "#94a3b8", hideOverlap: true } }, { type: "category", gridIndex: 1, data: dates, axisLabel: { show: false } }],
+      yAxis: [{ scale: true, axisLabel: { color: "#94a3b8", formatter: (value: number) => portfolioNumber(value) }, splitLine: { lineStyle: { color: "rgba(148,163,184,.12)" } } }, { gridIndex: 1, scale: true, axisLabel: { color: "#94a3b8", formatter: (value: number) => portfolioNumber(value) } }],
+      dataZoom: [{ type: "inside", xAxisIndex: [0, 1] }, { type: "slider", xAxisIndex: [0, 1], bottom: 0, height: 18 }],
+      series: [
+        { name: "价格", type: "candlestick", data: bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]), itemStyle: { color: "#ef4444", color0: "#22c55e", borderColor: "#ef4444", borderColor0: "#22c55e" }, markLine: averageCost != null ? { symbol: "none", data: [{ yAxis: averageCost, lineStyle: { color: "#f59e0b", type: "dashed" }, label: { formatter: `成本 ${portfolioNumber(averageCost)}` } }] } : undefined },
+        { name: "SMA20", type: "line", showSymbol: false, data: sma, lineStyle: { color: "#60a5fa" } },
+        { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: bars.map((bar) => bar.volume), itemStyle: { color: "rgba(243,93,43,.4)" } },
+        { name: "买入", type: "scatter", data: buy, symbol: "triangle", symbolSize: 10, itemStyle: { color: "#22c55e" } },
+        { name: "卖出", type: "scatter", data: sell, symbol: "pin", symbolSize: 11, itemStyle: { color: "#ef4444" } },
+      ],
+    });
+    const resize = () => instance.resize(); window.addEventListener("resize", resize);
+    return () => { window.removeEventListener("resize", resize); instance.dispose(); };
+  }, [chart]);
+
+  if (!analytics && !instruments.length && !analyticsError) return null;
+  const latest = analytics?.latest_contributors || [];
+  return <div className="mt-6 border-t border-border/50 pt-5">
+    <div className="mb-3"><h3 className="flex items-center gap-2 text-base font-semibold"><BarChart3 className="h-4 w-4 text-primary" />IBKR 组合分析</h3><p className="text-xs text-muted-foreground">仓位、每日盈亏与交易点位均来自 Vibe 本地 Flex 账本。</p></div>
+    {analyticsError && <p className="mb-3 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning">{analyticsError}</p>}
+    {analytics && <>
+      <div className="grid gap-3 sm:grid-cols-4"><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">最新 NAV</p><p className="font-mono text-lg font-bold">{fmt(analytics.latest_nav)} <span className="text-xs font-normal text-muted-foreground">{analytics.reporting_currency || ""}</span></p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">Gross exposure</p><p className="font-mono text-lg font-bold">{fmt(analytics.gross_exposure)}</p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">P&amp;L 天数</p><p className="font-mono text-lg font-bold">{analytics.daily_pnl.length}</p></div><div className="rounded-lg bg-muted/30 p-3"><p className="text-xs text-muted-foreground">最新报告</p><p className="font-mono text-sm font-bold">{analytics.latest_report_date || "—"}</p></div></div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2"><div><h4 className="mb-2 text-sm font-semibold">Position allocation</h4><div className="space-y-2">{analytics.allocation.slice(0, 12).map((item) => <div key={`${item.symbol}-${item.currency}`}><div className="flex justify-between text-xs"><span>{item.side} · {item.symbol}</span><span className="font-mono">{percent(item.weight)}</span></div><div className="mt-1 h-2 rounded-full bg-muted/40"><div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(100, item.weight * 100)}%` }} /></div></div>)}</div></div><div><h4 className="mb-2 text-sm font-semibold">P&amp;L calendar</h4><div className="grid max-h-52 grid-cols-2 gap-1 overflow-auto sm:grid-cols-3">{analytics.daily_pnl.map((item) => <div key={`${item.calendar_date}-${item.reporting_currency}`} className={`rounded border p-2 text-xs ${item.pnl_amount > 0 ? "border-success/25 bg-success/5" : item.pnl_amount < 0 ? "border-danger/25 bg-danger/5" : "border-border/50"}`}><div className="text-muted-foreground">{item.calendar_date} · {item.reporting_currency}</div><div className={`font-mono ${pnlClass(item.pnl_amount)}`}>{signed(item.pnl_amount)}</div></div>)}</div></div></div>
+      <div className="mt-4"><h4 className="mb-2 text-sm font-semibold">Latest Broker P&amp;L Contributors {analytics.latest_report_date ? `· ${analytics.latest_report_date}` : ""}</h4>{latest.length ? <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="border-b border-border/50 text-left text-muted-foreground"><th className="p-2">Symbol</th><th className="p-2">Close</th><th className="p-2">Transaction MTM</th><th className="p-2">Total</th></tr></thead><tbody>{latest.map((item) => <tr key={`${item.account_ref}-${item.report_date}-${item.symbol}`} className="border-b border-border/30"><td className="p-2 font-medium">{item.symbol}</td><td className="p-2 font-mono">{fmt(item.close_price)}</td><td className={`p-2 font-mono ${pnlClass(item.transaction_mtm)}`}>{signed(item.transaction_mtm)}</td><td className={`p-2 font-mono ${pnlClass(item.total)}`}>{signed(item.total)}</td></tr>)}</tbody></table></div> : <p className="text-xs text-muted-foreground">暂无历史 P&amp;L。请配置 IBKR history query 后刷新。</p>}</div>
+      {analytics.warnings.length > 0 && <p className="mt-3 text-xs text-warning">{analytics.warnings.join("；")}</p>}
+    </>}
+    {instruments.length > 0 && <div className="mt-5"><h4 className="mb-2 text-sm font-semibold">Position deep dive</h4><div className="flex flex-wrap gap-2">{instruments.map((item) => <button key={item.instrument_key} onClick={() => onSelect(item.instrument_key)} className={`rounded-lg border px-3 py-2 text-left text-xs ${selectedKey === item.instrument_key ? "border-primary bg-primary/10 text-primary" : "border-border/60 text-muted-foreground"}`}><span className="font-mono font-semibold">{item.symbol}</span><span className="ml-2">{item.status} · {fmt(item.quantity)}</span></button>)}</div></div>}
+    {chartError && <p className="mt-3 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm text-warning">{chartError}</p>}
+    {chart && <div className="mt-4 rounded-lg border border-border/60 p-3"><div className="flex flex-wrap items-center gap-2"><div><p className="font-semibold">{chart.instrument.name} <span className="font-mono text-xs text-muted-foreground">{chart.instrument.symbol}</span></p><p className="text-xs text-muted-foreground">{chart.provider_symbol || "未映射"} · {chart.mapping_source}</p></div><div className="ml-auto flex items-center gap-2"><input value={mapping} onChange={(event) => setMapping(event.target.value)} placeholder="Yahoo symbol，如 VOD.L" className="w-40 rounded border border-border bg-background px-2 py-1 text-xs" /><input value={multiplier} onChange={(event) => setMultiplier(event.target.value)} className="w-14 rounded border border-border bg-background px-2 py-1 text-xs" title="价格倍数" /><button onClick={onSaveMapping} className="rounded bg-primary/15 px-2 py-1 text-xs text-primary">保存映射</button></div></div><div className="mt-3 flex flex-wrap items-center gap-1 border-t border-border/40 pt-3"><span className="mr-1 text-xs text-muted-foreground">图表区间</span>{["1m", "3m", "ytd", "1y", "2y", "all"].map((item) => <button key={item} onClick={() => onRange(item)} className={`rounded px-2 py-1 text-xs ${range === item ? "bg-primary/15 text-primary" : "bg-muted/40 text-muted-foreground"}`}>{item.toUpperCase()}</button>)}</div>{chart.bars.length ? <div ref={chartHost} className="mt-2 h-[430px] w-full" role="img" aria-label="IBKR position price chart with executions" /> : <p className="py-8 text-center text-sm text-muted-foreground">暂无行情数据</p>}{chart.warnings.length > 0 && <p className="mt-2 text-xs text-warning">{chart.warnings.join("；")}</p>}</div>}
+  </div>;
 }

@@ -87,7 +87,13 @@ export interface RealPosition {
   fx_rate: number | null;
   reporting_currency: string | null;
   cost_status: string;
+  pnl_status: string;
   observed_at: string | null;
+}
+
+export interface PositionPreferences {
+  items: string[];
+  updated_at: string | null;
 }
 
 export interface RealPositionSnapshot {
@@ -98,6 +104,51 @@ export interface RealPositionSnapshot {
   report_date: string | null;
   summary: { reporting_currency: string | null; nav: number | null; reporting_coverage: number | null };
   positions: RealPosition[];
+  warnings: string[];
+}
+
+export interface IbkrAllocation {
+  symbol: string; name: string; asset_class: string; side: "Long" | "Short";
+  market_value: number; weight: number; currency: string | null;
+}
+export interface IbkrDailyPnl {
+  calendar_date: string; ending_nav: number; pnl_amount: number; pnl_percent: number | null;
+  comparison_date: string | null; reporting_currency: string;
+}
+export interface IbkrContributor {
+  account_ref: string; report_date: string; symbol: string; asset_class: string;
+  previous_close_quantity: number; previous_close_price: number; close_quantity: number;
+  close_price: number; transaction_mtm: number; prior_open_mtm: number; commissions: number; total: number;
+  is_total: number;
+}
+export interface IbkrAnalytics {
+  range: string; source: string; current: RealPositionSnapshot; allocation: IbkrAllocation[];
+  gross_exposure: number | null; latest_nav: number | null; reporting_currency: string | null;
+  daily_pnl: IbkrDailyPnl[]; latest_contributors: IbkrContributor[]; latest_report_date: string | null;
+  warnings: string[];
+}
+export interface IbkrRefreshStatus {
+  job_id: string | null; status: "idle" | "queued" | "running" | "complete" | "partial";
+  stage: string; started_at?: string; finished_at?: string | null;
+  positions_status: string; history_status: string; error_message?: string | null;
+  positions_report_date?: string | null; history_report_date?: string | null;
+}
+export interface IbkrInstrument {
+  instrument_key: string; account_ref: string; account_label: string; symbol: string; name: string;
+  asset_class: string; currency: string; venue: string | null; status: "open" | "closed";
+  quantity: number | null; average_cost: number | null;
+}
+export interface IbkrExecution {
+  trade_key: string; occurred_at: string; side: "BUY" | "SELL"; quantity: number; price: number | null;
+  fees: number; net_cash: number | null; external_id: string | null;
+}
+export interface IbkrChartBar {
+  date: string; open: number | null; high: number | null; low: number | null; close: number | null;
+  adjusted_close: number | null; volume: number | null; sma20: number | null; currency: string;
+}
+export interface IbkrPositionChart {
+  instrument: IbkrInstrument; provider_symbol: string | null; price_multiplier: number;
+  mapping_source: string; provider: string | null; bars: IbkrChartBar[]; executions: IbkrExecution[];
   warnings: string[];
 }
 
@@ -116,7 +167,7 @@ export async function downloadReport(id: string, name: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-async function request<T>(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown): Promise<T> {
+async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE" = "GET", body?: unknown): Promise<T> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
   const opts: RequestInit = { method, credentials: "same-origin" };
@@ -322,28 +373,6 @@ export interface PortfolioData {
   updated: string; last_refresh: string | null;
 }
 
-export interface PaMasterAllocation {
-  symbol: string; asset_class: string; local_currency: string;
-  reporting_market_value: string | null; portfolio_weight: string | null;
-  reporting_unrealized_pnl: string | null; cost_status: string;
-}
-export interface PaMasterPosition {
-  account_ref: string; account_label: string; instrument_id: string | null; symbol: string; name: string;
-  asset_class: string; currency: string; venue: string | null; trade_agent_market: string | null;
-  quantity: string; average_cost: string | null; latest_price: string | null;
-  unrealized_pnl: string | null; cost_status: string;
-}
-export interface PaMasterPortfolio {
-  configured: boolean; status: "available" | "partial" | "disabled" | "unavailable";
-  detail?: string; source: "pa-master"; fetched_at?: string;
-  summary?: { reporting_currency: string | null; nav: string | null; reporting_coverage: string | null };
-  freshness?: {
-    last_positions_refreshed_at: string | null; last_history_refreshed_at: string | null;
-    last_full_refresh_completed_at: string | null;
-  };
-  allocations: PaMasterAllocation[]; positions: PaMasterPosition[];
-}
-
 // 资金面 / 筹码 / 信号（v3.3 并入，均为「用户查的那只股」的公开数据）
 export interface MarginRow { date: string; rzye: number; rzmre: number; rzche: number; rqye: number; rqmcl: number; rzrqye: number }
 export interface BlockTradeRow { date: string; price: number; close: number; premium_pct: number; vol: number; amount: number; buyer: string; seller: string }
@@ -480,12 +509,20 @@ export const api = {
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${encodeURIComponent(code)}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
-  paMasterPortfolio: () => get<PaMasterPortfolio>("/portfolio/pa-master"),
   authSession: () => get<AuthSession>("/auth/session"),
   authLogin: (username: string, password: string) => request<AuthSession>("/auth/login", "POST", { username, password }),
   authLogout: () => request<{ authenticated: boolean }>("/auth/logout", "POST"),
   realPositions: () => get<RealPositionSnapshot>("/positions/current"),
+  positionPreferences: () => get<PositionPreferences>("/positions/preferences"),
+  savePositionPreferences: (items: string[]) => request<PositionPreferences>("/positions/preferences", "PUT", { items }),
   refreshRealPositions: (confirmEmpty = false) => request<RealPositionSnapshot>("/positions/refresh", "POST", { confirm_empty: confirmEmpty }),
+  refreshAllPositions: () => request<IbkrRefreshStatus>("/positions/refresh-all", "POST"),
+  positionRefreshStatus: (jobId?: string) => get<IbkrRefreshStatus>(`/positions/refresh-status${jobId ? `?job_id=${encodeURIComponent(jobId)}` : ""}`),
+  positionAnalytics: (range = "3m") => get<IbkrAnalytics>(`/positions/analytics?range=${encodeURIComponent(range)}`),
+  positionInstruments: (status: "all" | "open" | "closed" = "all") => get<IbkrInstrument[]>(`/positions/instruments?status=${status}`),
+  positionChart: (instrumentKey: string, range = "3m") => get<IbkrPositionChart>(`/positions/chart?instrument_key=${encodeURIComponent(instrumentKey)}&range=${encodeURIComponent(range)}`),
+  savePositionMapping: (instrumentKey: string, providerSymbol: string, priceMultiplier = 1) =>
+    request<Record<string, unknown>>("/positions/mappings", "POST", { instrument_key: instrumentKey, provider_symbol: providerSymbol, price_multiplier: priceMultiplier }),
   closePosition: (code: string, date: string, price: number, shares: number, cost: number) =>
     request<PortfolioData>("/portfolio/close", "POST", { code, date, price, shares, cost }),
   removeClosed: (index: number) => request<PortfolioData>(`/portfolio/close?index=${index}`, "DELETE"),

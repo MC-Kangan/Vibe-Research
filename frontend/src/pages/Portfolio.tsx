@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, ShieldCheck, RefreshCw, Loader2, Trash2, AlertCircle } from "lucide-react";
+import { Plus, ShieldCheck, RefreshCw, Loader2, Trash2, AlertCircle, Save, Target } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
@@ -7,14 +7,13 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { api, ApiError, type PortfolioData } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { normalizeStockSymbol } from "@/lib/market-symbols";
-import { PaMasterPortfolioPanel } from "@/components/portfolio/PaMasterPortfolioPanel";
 import { RealPositionPanel } from "@/components/portfolio/RealPositionPanel";
+import { investmentProfileContext, portfolioAiInstruction, portfolioAiNumber, portfolioNumber, portfolioValuePercent } from "@/lib/portfolio-format";
 
 const REFRESH_MS = 30 * 60 * 1000; // 每半小时自动刷新
 const pnlColor = (v: number | null) => v != null && v > 0 ? "text-success" : v != null && v < 0 ? "text-danger" : "text-muted-foreground";
-const fmt = (v: number | null) => v == null ? "—" : v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
-// 单价类（现价/成本/清仓价）最多 4 位小数：ETF/基金常见 3-4 位，截断成 2 位会与市值/盈亏对不上账
-const fmtPx = (v: number | null) => v == null ? "—" : v.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
+const fmt = portfolioNumber;
+const fmtPx = portfolioNumber;
 
 export function Portfolio() {
   const [data, setData] = useState<PortfolioData | null>(null);
@@ -31,6 +30,12 @@ export function Portfolio() {
   const [cShares, setCShares] = useState("");
   const [cCost, setCCost] = useState("");
   const [closing, setClosing] = useState(false);
+  const [view, setView] = useState<"ibkr" | "manual">("ibkr");
+  const [preferences, setPreferences] = useState<string[]>([]);
+  const [preferenceDraft, setPreferenceDraft] = useState("");
+  const [preferenceSaving, setPreferenceSaving] = useState(false);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+  const [preferenceUpdatedAt, setPreferenceUpdatedAt] = useState<string | null>(null);
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -49,6 +54,30 @@ export function Portfolio() {
     const t = setInterval(() => load(), REFRESH_MS); // 每半小时自动刷新
     return () => clearInterval(t);
   }, [load]);
+
+  useEffect(() => {
+    api.positionPreferences().then((payload) => {
+      setPreferences(payload.items);
+      setPreferenceDraft(payload.items.map((item) => `- ${item}`).join("\n"));
+      setPreferenceUpdatedAt(payload.updated_at);
+      setPreferenceError(null);
+    }).catch((reason: unknown) => {
+      setPreferenceError(reason instanceof ApiError ? reason.message : "投资目标加载失败");
+    });
+  }, []);
+
+  const savePreferences = async () => {
+    const items = preferenceDraft.split("\n").map((item) => item.trim()).filter(Boolean);
+    setPreferenceSaving(true); setPreferenceError(null);
+    try {
+      const saved = await api.savePositionPreferences(items);
+      setPreferences(saved.items);
+      setPreferenceDraft(saved.items.map((item) => `- ${item}`).join("\n"));
+      setPreferenceUpdatedAt(saved.updated_at);
+    } catch (reason) {
+      setPreferenceError(reason instanceof ApiError ? reason.message : "投资目标保存失败");
+    } finally { setPreferenceSaving(false); }
+  };
 
   const add = async () => {
     const symbol = normalizeStockSymbol(code);
@@ -96,17 +125,17 @@ export function Portfolio() {
   const currencyTotals = Object.values(data?.totals_by_currency || {});
   const closed = data?.closed || [];
 
-  const aiContext = totals
-    ? `我的持仓（本地数据）：\n` + holdings.map((h) => `${h.name}(${h.code}) ${h.shares}股 成本${h.cost} 现价${h.price} 浮盈${h.pnl} ${h.currency}(${h.pnl_pct}%)`).join("\n") +
-      `\n分币种汇总：` + currencyTotals.map((t) => `${t.currency} 市值${t.market_value} 浮盈${t.pnl}(${t.pnl_pct}%)`).join("；")
-    : "我的持仓：暂无记录。";
+  const aiContext = `${investmentProfileContext(preferences)}\n\n${totals
+    ? `我的持仓（本地数据）：\n` + holdings.map((h) => `${h.name}(${h.code}) ${portfolioAiNumber(h.shares)}股 成本${portfolioAiNumber(h.cost)} 现价${portfolioAiNumber(h.price)} 浮盈${portfolioAiNumber(h.pnl)} ${h.currency}(${portfolioAiNumber(h.pnl_pct)}%)`).join("\n") +
+      `\n分币种汇总：` + currencyTotals.map((t) => `${t.currency} 市值${portfolioAiNumber(t.market_value)} 浮盈${portfolioAiNumber(t.pnl)}(${portfolioAiNumber(t.pnl_pct)}%)`).join("；")
+    : "我的持仓：暂无记录。"}\n\n${portfolioAiInstruction}`;
 
   return (
     <div>
       <PageHeader
         title="我的持仓"
         subtitle="IBKR 实际持仓为主；手工记录仍保留在本地"
-        actions={
+        actions={view === "manual" ? (
           <div className="flex items-center gap-2">
             {holdings.length > 0 && (
               <AskAiButton context={aiContext} label="让 AI 看我的持仓"
@@ -118,7 +147,7 @@ export function Portfolio() {
               刷新
             </button>
           </div>
-        }
+        ) : undefined}
       />
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
@@ -126,7 +155,23 @@ export function Portfolio() {
         <span>真实持仓从 IBKR Flex 只读导入并存为本地快照；不会提交订单，也不会把原始 Flex 报文上传。手工持仓仍只存在本地。</span>
       </div>
 
-      <RealPositionPanel />
+      <GlassCard className="mb-4">
+        <div className="flex flex-wrap items-start gap-3">
+          <div><h2 className="flex items-center gap-2 text-sm font-semibold"><Target className="h-4 w-4 text-primary" />投资目标与风险偏好</h2><p className="mt-1 text-xs text-muted-foreground">每行一条。保存后会持久化到 Vibe，并在 AI 分析持仓前作为首要上下文。</p></div>
+          <button onClick={savePreferences} disabled={preferenceSaving} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/25 disabled:opacity-50">{preferenceSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}保存</button>
+        </div>
+        <textarea value={preferenceDraft} onChange={(event) => setPreferenceDraft(event.target.value)} rows={4} maxLength={5200} placeholder={"- 长期资本增值\n- 最大可接受回撤 15%\n- 降低单一行业集中度"} className="mt-3 w-full resize-y rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50" />
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground/60"><span>{preferences.length}/20 条已保存</span>{preferenceUpdatedAt && <span>更新于 {new Date(preferenceUpdatedAt).toLocaleString("zh-CN")}</span>}{preferenceError && <span className="text-warning">{preferenceError}</span>}</div>
+      </GlassCard>
+
+      <div className="mb-4 flex gap-2 rounded-lg border border-border/60 bg-muted/20 p-1">
+        <button onClick={() => setView("ibkr")} className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${view === "ibkr" ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>IBKR 实际持仓与分析</button>
+        <button onClick={() => setView("manual")} className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${view === "manual" ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>手工记录</button>
+      </div>
+
+      {view === "ibkr" && <RealPositionPanel preferences={preferences} />}
+
+      {view === "manual" && <>
 
       {/* 汇总 */}
       {currencyTotals.length > 0 && holdings.length > 0 && (
@@ -137,7 +182,7 @@ export function Portfolio() {
                 { k: `总市值 · ${total.currency}`, v: fmt(total.market_value), c: "text-foreground" },
                 { k: `总成本 · ${total.currency}`, v: fmt(total.cost), c: "text-foreground" },
                 { k: "浮动盈亏", v: (total.pnl > 0 ? "+" : "") + fmt(total.pnl), c: pnlColor(total.pnl) },
-                { k: "盈亏比例", v: (total.pnl_pct > 0 ? "+" : "") + total.pnl_pct + "%", c: pnlColor(total.pnl) },
+                { k: "盈亏比例", v: portfolioValuePercent(total.pnl_pct), c: pnlColor(total.pnl) },
               ].map((m) => (
                 <GlassCard key={m.k} className="p-3">
                   <p className="text-xs text-muted-foreground">{m.k}</p>
@@ -212,7 +257,7 @@ export function Portfolio() {
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmtPx(h.cost)}</td>
                     <td className="px-2 py-2.5 font-mono">{fmt(h.market_value)}</td>
                     <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl != null && h.pnl > 0 ? "+" : ""}{fmt(h.pnl)}</td>
-                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl_pct == null ? "—" : `${h.pnl_pct > 0 ? "+" : ""}${h.pnl_pct}%`}</td>
+                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{portfolioValuePercent(h.pnl_pct)}</td>
                     <td className="px-2 py-2.5">
                       <button onClick={() => remove(h.code)} className="text-muted-foreground/50 hover:text-destructive" title="删除">
                         <Trash2 className="h-3.5 w-3.5" />
@@ -225,8 +270,6 @@ export function Portfolio() {
           </div>
         )}
       </GlassCard>
-
-      <PaMasterPortfolioPanel />
 
       {/* 清仓录入 */}
       <GlassCard className="mb-4 mt-6">
@@ -300,7 +343,7 @@ export function Portfolio() {
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmt(c.shares)}</td>
                     <td className="px-2 py-2.5 font-mono text-muted-foreground">{fmtPx(c.cost)}</td>
                     <td className={cn("px-2 py-2.5 font-mono", pnlColor(c.pnl))}>{c.pnl > 0 ? "+" : ""}{fmt(c.pnl)}</td>
-                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(c.pnl))}>{c.pnl_pct > 0 ? "+" : ""}{c.pnl_pct}%</td>
+                    <td className={cn("px-2 py-2.5 font-mono", pnlColor(c.pnl))}>{portfolioValuePercent(c.pnl_pct)}</td>
                     <td className="px-2 py-2.5">
                       <button onClick={() => removeClosed(i)} className="text-muted-foreground/50 hover:text-destructive" title="删除">
                         <Trash2 className="h-3.5 w-3.5" />
@@ -313,6 +356,8 @@ export function Portfolio() {
           </div>
         )}
       </GlassCard>
+
+      </>}
 
       <Disclaimer />
     </div>

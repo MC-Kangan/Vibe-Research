@@ -25,13 +25,14 @@ import chat as chat_layer
 import cli_runtime
 import debate as debate_layer
 import gstock
+import ibkr_analytics
 import market_data
 import market_intelligence
 import newsradar
 import portfolio as pf
 import market
 import myreports as mr
-import pa_master as pa_master_layer
+import position_preferences
 import position_service
 import reflection as reflect_layer
 import research as research_layer
@@ -47,7 +48,7 @@ _ORIGINS = [o.strip() for o in os.environ.get("VR_ALLOW_ORIGINS", "*").split(","
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     allow_credentials="*" not in _ORIGINS,
 )
@@ -267,10 +268,33 @@ class PositionRefreshIn(BaseModel):
     confirm_empty: bool = False
 
 
+class PositionMappingIn(BaseModel):
+    instrument_key: str
+    provider_symbol: str
+    price_multiplier: float = 1.0
+
+
+class PositionPreferencesIn(BaseModel):
+    items: list[str] = Field(default_factory=list, max_length=20)
+
+
 @app.get("/api/positions/current")
 def positions_current():
     """Return the last normalized real-position snapshot without broker I/O."""
     return {"data": position_service.get_current()}
+
+
+@app.get("/api/positions/preferences")
+def positions_preferences_get():
+    return {"data": position_preferences.get()}
+
+
+@app.put("/api/positions/preferences")
+def positions_preferences_put(request: PositionPreferencesIn):
+    try:
+        return {"data": position_preferences.save(request.items)}
+    except position_preferences.PositionPreferenceError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/positions/refresh")
@@ -282,6 +306,57 @@ def positions_refresh(request: PositionRefreshIn):
         message = str(exc)
         status = 429 if "cooling down" in message else 409 if "confirm_empty" in message else 503
         raise HTTPException(status, message) from exc
+
+
+@app.post("/api/positions/refresh-all", status_code=202)
+def positions_refresh_all():
+    """Queue the current-position and history Flex imports as one read-only job."""
+    if not ibkr_analytics.configured():
+        raise HTTPException(503, "IBKR Flex current-position query is not configured")
+    return {"data": ibkr_analytics.start_refresh()}
+
+
+@app.get("/api/positions/refresh-status")
+def positions_refresh_status(job_id: str | None = None):
+    return {"data": ibkr_analytics.refresh_status(job_id)}
+
+
+@app.get("/api/positions/analytics")
+def positions_analytics(range_name: str = Query("3m", alias="range")):
+    try:
+        return {"data": ibkr_analytics.analytics(range_name)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/positions/instruments")
+def positions_instruments(status: str = Query("all")):
+    if status not in {"all", "open", "closed"}:
+        raise HTTPException(400, "status must be all, open, or closed")
+    return {"data": ibkr_analytics.list_instruments(status)}
+
+
+@app.get("/api/positions/chart")
+def positions_chart(
+    instrument_key: str = Query(..., min_length=8, max_length=64),
+    range_name: str = Query("3m", alias="range"),
+):
+    try:
+        return {"data": ibkr_analytics.chart(instrument_key, range_name)}
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/positions/mappings")
+def positions_mapping(request: PositionMappingIn):
+    try:
+        return {"data": ibkr_analytics.save_mapping(request.instrument_key, request.provider_symbol, request.price_multiplier)}
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/portfolio/holding")
@@ -373,12 +448,6 @@ def portfolio_refresh():
         return {"data": pf.get_portfolio()}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"刷新失败：{e}") from e
-
-
-@app.get("/api/portfolio/pa-master")
-def pa_master_portfolio():
-    """Read PA Master's portfolio snapshot without importing it into local storage."""
-    return pa_master_layer.get_portfolio()
 
 
 @app.get("/api/radar")

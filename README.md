@@ -129,14 +129,144 @@ Vibe-Research/
 
 ## 快速开始
 
-```bash
-# 后端（:8900）
-cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8900
+### 方式 A：本地一键启动（推荐开发 / 测试）
 
-# 前端（:5899）
-cd frontend && npm install && npm run dev
-# 浏览器打开 http://localhost:5899
+前置条件：Vibe Research 和 [TradeAgent](../TradeAgent) 目录并列，且各自已经创建 `.venv` / 安装依赖。首次安装仍可按下面的命令完成：
+
+```bash
+cd /Users/chenkangan/Documents/VibeResearch
+
+# Vibe 后端依赖
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.txt
+
+# Vibe 前端依赖
+cd frontend && npm install && cd ..
+```
+
+启动完整本地栈（TradeAgent、Vibe 后端和前端）：
+
+```bash
+cd /Users/chenkangan/Documents/VibeResearch
+bash scripts/start-local-stack.sh
+```
+
+打开 <http://127.0.0.1:5899>。脚本在前台运行，按 `Ctrl-C` 会停止它启动的全部服务；日志会保留在脚本输出的临时目录中。
+
+要在本地运行时使用真实持仓，可在仓库根目录创建被 Git 忽略的 `.env.local`（推荐，优先于 `.env`）：
+
+```bash
+export VR_IBKR_FLEX_TOKEN='your_flex_token'
+export VR_IBKR_FLEX_QUERY_ID='your_positions_query_id'
+export VR_IBKR_FLEX_HISTORY_QUERY_ID='your_history_query_id'
+export VR_IBKR_FLEX_TIMEZONE='Europe/London'
+export VR_IBKR_FLEX_COOLDOWN_SECONDS='300'
+export VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS='5'
+```
+
+如果你已经有根目录 `.env`，也可以直接把这几个变量加入现有 `.env`；本地脚本在找不到 `.env.local` 时会自动读取 `.env`，Docker Compose 也使用同一个文件。
+
+然后重新启动脚本：
+
+```bash
+source .env.local
+bash scripts/start-local-stack.sh
+```
+
+当 current token/query 同时存在时，脚本会将凭据传给 Vibe 的「我的持仓」直接 IBKR 面板。history query 可选；配置后「刷新当前 + 历史」会先导入当前持仓，默认间隔 5 秒再导入历史 P&L。若 IBKR 返回正在生成（1001/1019）或 pacing（1018），Vibe 会分别使用 15 秒或 60 秒退避并只重试一次；因此正常刷新不再固定等待一分钟。
+
+`VR_IBKR_FLEX_QUERY_ID` 应指向包含 `OpenPosition`、账户信息、成本、标记价格、持仓价值和未实现盈亏的 current query。`VR_IBKR_FLEX_HISTORY_QUERY_ID` 应指向包含 `ChangeInNAV`、`MTMPerformanceSummaryUnderlying`、`Trade` 和 `SecurityInfo` 的历史 query。`SymbolSummary` 不是逐日 MTM 数据，不能替代 `MTMPerformanceSummaryUnderlying`。
+
+本地脚本默认将持仓快照和分析账本持久化到 `~/.vibe-research`。即使脚本回退读取 Docker 使用的 `.env`，也不会误用容器内的 `/data` 路径；需要自定义时设置 `VIBE_LOCAL_DATA_DIR`。
+
+停止本地栈后再切换到 Docker：
+
+```bash
+# 在运行脚本的终端按 Ctrl-C
+```
+
+### 方式 B：Docker Compose（NAS / 长期运行）
+
+安装并启动 Docker Desktop（或 NAS 上的 Docker Engine）后，在仓库根目录创建 `.env`。不要把 token 放进前端变量或提交到 Git：
+
+```env
+VR_IBKR_FLEX_TOKEN=your_flex_token
+VR_IBKR_FLEX_QUERY_ID=your_positions_query_id
+VR_IBKR_FLEX_HISTORY_QUERY_ID=your_history_query_id
+VR_IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
+VR_IBKR_FLEX_TIMEZONE=Europe/London
+VR_IBKR_FLEX_COOLDOWN_SECONDS=300
+VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS=5
+VR_BIND_ADDRESS=127.0.0.1
+VR_WEB_PORT=8080
+```
+
+启动或更新服务：
+
+```bash
+cd /Users/chenkangan/Documents/VibeResearch
+docker compose up -d --build backend frontend
+```
+
+打开 <http://127.0.0.1:8080>，进入「我的持仓」并点击「刷新当前 + 历史」。快照和分析账本持久化在 Compose 的 `vibe-data` volume 中；NAS 部署可用 `VR_DATA_PATH` 指向 NAS 的绝对目录。
+
+如果要启用 TradeAgent 的 Compose research profile：
+
+```bash
+# 首次使用或 TradeAgent 代码有更新时，先构建镜像
+docker build -t trade-research:latest ../TradeAgent
+
+# .env 中同时设置：
+# VR_TRADE_RESEARCH_ENABLED=true
+# VR_TRADE_RESEARCH_API_TOKEN=一个随机共享密钥
+COMPOSE_PROFILES=research docker compose up -d --build
+```
+
+Compose 中的 `research-api` 使用同一个 `VR_TRADE_RESEARCH_API_TOKEN` 与 Vibe 后端通信。
+
+常用运维命令：
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose down
+```
+
+不要同时运行本地脚本和 Docker Compose；两者会争用端口。Docker 不运行时，使用本地脚本完全可以工作。
+
+### IBKR Flex 配置要点
+
+在 IBKR Client Portal 的 **Reporting → Flex Queries** 中启用 Flex Web Service、创建 current 与 history 两个 Activity Flex Query，并复制 token 和 query ID。Vibe 使用 `VR_IBKR_FLEX_QUERY_ID` 导入当前持仓，使用可选的 `VR_IBKR_FLEX_HISTORY_QUERY_ID` 导入 YTD NAV/MTM 历史。完整说明见 [`backend/README.md`](backend/README.md) 的「真实持仓与浏览器登录」章节。
+
+本地启动时，脚本会打印本次日志目录和一条可直接复制的 IBKR 日志命令，例如：
+
+```bash
+tail -f /path/printed/by/script/vibe-backend.log
+```
+
+日志只记录请求阶段、HTTP 状态、响应类型/大小、不可逆指纹和重试次数；不会记录 Flex token、query ID、账户 ID 或原始报表。常见错误：`1001` 表示 IBKR 暂时无法生成 statement，应用会按退避间隔重试并保留旧快照；`1018` 表示 pacing limit，应等待冷却时间后再试。
+
+如需在不写入 Vibe 快照的情况下单独检查 Flex Query，先停止当前刷新任务，然后运行：
+
+```bash
+bash scripts/test-ibkr-flex.sh current
+bash scripts/test-ibkr-flex.sh history
+
+# 或一次检查两个；脚本会自动等待 Flex pacing 间隔
+bash scripts/test-ibkr-flex.sh all
+```
+
+输出只包含报表 section 数量、日期和脱敏的响应结构。`current` 应有 `OpenPosition`；`history` 应有 `ChangeInNAV`、`MTMPerformanceSummaryUnderlying` 和 `Trade`。
+
+### 手动启动单个服务（不启动完整栈）
+
+需要时也可以分别启动后端和前端；先在两个终端都执行 `source .env.local`（没有 IBKR 时可跳过）：
+
+```bash
+# 终端 1
+cd backend && .venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8900
+# 终端 2
+cd frontend && npm run dev -- --host 127.0.0.1 --port 5899
 ```
 
 ## 接入 AI

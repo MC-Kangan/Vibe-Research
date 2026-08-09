@@ -85,8 +85,11 @@ MCP 的 4 个工具是「零配置、开箱即用」的常用项。若 agent 需
 ## 真实持仓与浏览器登录
 
 设置 `VR_IBKR_FLEX_TOKEN` 和 `VR_IBKR_FLEX_QUERY_ID` 后，网页「我的持仓」的
-「从 IBKR 刷新」按钮会执行只读 Flex current-position 查询，并将规范化快照存到
-`VR_DATA_DIR`。刷新失败时会保留上一次有效快照；手工持仓记录仍使用原有本地存储。
+「仅刷新当前」按钮会执行只读 Flex current-position 查询，并将规范化快照存到
+`VR_DATA_DIR`。当 current query 的成本字段为空时，只有成交净数量与当前数量完全
+一致的持仓才会用 Flex `Trade` 重建成本和浮盈；无法核对的数值显示为不可用。刷新
+失败时会保留上一次有效快照；手工持仓记录仍使用原有本地存储。投资目标与风险偏好
+保存到同目录的 `position-preferences.json`，并在用户主动调用持仓 AI 分析时加入提示。
 
 NAS 部署时建议启用 `VR_AUTH_ENABLED=true`、`VR_AUTH_USERNAME`、
 `VR_AUTH_PASSWORD_HASH` 和 `VR_SESSION_SECRET`。密码哈希可这样生成（不会把明文

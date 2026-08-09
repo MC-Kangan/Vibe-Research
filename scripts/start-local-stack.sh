@@ -3,34 +3,59 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PA_MASTER_DIR="${PA_MASTER_DIR:-${ROOT_DIR}/../PAMASTER}"
+# Keep secrets out of the command line while making the local launcher repeatable.
+# `.env.local` is preferred; the Compose `.env` is accepted as a fallback.
+# Both files are ignored by Git and may contain regular `NAME=value` lines.
+ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env.local}"
+if [[ ! -f "$ENV_FILE" && "$ENV_FILE" == "${ROOT_DIR}/.env.local" && -f "${ROOT_DIR}/.env" ]]; then
+  ENV_FILE="${ROOT_DIR}/.env"
+fi
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 TRADE_AGENT_DIR="${TRADE_AGENT_DIR:-${ROOT_DIR}/../TradeAgent}"
 VIBE_PORT="${VIBE_PORT:-8900}"
-PA_MASTER_PORT="${PA_MASTER_PORT:-8000}"
 TRADE_AGENT_PORT="${TRADE_AGENT_PORT:-8002}"
 FRONTEND_PORT="${FRONTEND_PORT:-5899}"
 TRADE_RESEARCH_API_TOKEN="${TRADE_RESEARCH_API_TOKEN:-dev-token}"
 RUN_DIR="${RUN_DIR:-$(mktemp -d -t vibe-research-local.XXXXXX)}"
-PA_DB="${RUN_DIR}/pa-demo.db"
+VIBE_LOCAL_DATA_DIR="${VIBE_LOCAL_DATA_DIR:-${VR_DATA_DIR:-${HOME}/.vibe-research}}"
+# A root .env is commonly shared with Compose, where /data is a container-only
+# mount. Never let that value redirect a host-local run to the machine's /data.
+if [[ "$VIBE_LOCAL_DATA_DIR" == "/data" ]]; then
+  VIBE_LOCAL_DATA_DIR="${HOME}/.vibe-research"
+fi
+VIBE_LOCAL_POSITION_STORE="${VIBE_LOCAL_POSITION_STORE:-${VR_IBKR_POSITION_STORE:-${VIBE_LOCAL_DATA_DIR}/ibkr-positions.json}}"
+VIBE_LOCAL_ANALYTICS_STORE="${VIBE_LOCAL_ANALYTICS_STORE:-${VR_IBKR_ANALYTICS_STORE:-${VIBE_LOCAL_DATA_DIR}/ibkr-analytics.sqlite3}}"
+if [[ "$VIBE_LOCAL_POSITION_STORE" == /data/* ]]; then
+  VIBE_LOCAL_POSITION_STORE="${VIBE_LOCAL_DATA_DIR}/ibkr-positions.json"
+fi
+if [[ "$VIBE_LOCAL_ANALYTICS_STORE" == /data/* ]]; then
+  VIBE_LOCAL_ANALYTICS_STORE="${VIBE_LOCAL_DATA_DIR}/ibkr-analytics.sqlite3"
+fi
 PIDS=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/start-local-stack.sh
 
-Starts an isolated local demo stack:
-  PA Master demo API     http://127.0.0.1:8000
+Starts the local Vibe Research stack:
   TradeAgent API         http://127.0.0.1:8002
   Vibe backend           http://127.0.0.1:8900
   Vibe frontend          http://127.0.0.1:5899
 
 Environment overrides:
-  PA_MASTER_DIR, TRADE_AGENT_DIR, RUN_DIR
-  PA_MASTER_PORT, TRADE_AGENT_PORT, VIBE_PORT, FRONTEND_PORT
-  TRADE_RESEARCH_API_TOKEN
+  ENV_FILE (default: .env.local), TRADE_AGENT_DIR, RUN_DIR
+  TRADE_AGENT_PORT, VIBE_PORT, FRONTEND_PORT
+  TRADE_RESEARCH_API_TOKEN, VIBE_LOCAL_DATA_DIR
 
-The PA Master database is created under RUN_DIR and is seeded with demo data.
-No IBKR or Notion credentials are used.
+If .env.local contains VR_IBKR_FLEX_TOKEN and VR_IBKR_FLEX_QUERY_ID, the
+launcher passes the credentials to Vibe's direct read-only IBKR analytics.
+No orders are submitted.
 EOF
 }
 
@@ -43,6 +68,14 @@ fail() {
   echo "[local-stack] ERROR: $*" >&2
   exit 1
 }
+
+if [[ -n "${VR_IBKR_FLEX_TOKEN:-}" || -n "${VR_IBKR_FLEX_QUERY_ID:-}" ]]; then
+  [[ -n "${VR_IBKR_FLEX_TOKEN:-}" && -n "${VR_IBKR_FLEX_QUERY_ID:-}" ]] || \
+    fail "set both VR_IBKR_FLEX_TOKEN and VR_IBKR_FLEX_QUERY_ID, or leave both empty"
+fi
+if [[ -n "${VR_IBKR_FLEX_HISTORY_QUERY_ID:-}" && -z "${VR_IBKR_FLEX_TOKEN:-}" ]]; then
+  fail "VR_IBKR_FLEX_HISTORY_QUERY_ID requires VR_IBKR_FLEX_TOKEN"
+fi
 
 require_path() {
   [[ -d "$1" ]] || fail "directory not found: $1"
@@ -74,53 +107,28 @@ wait_for_url() {
 
 cleanup() {
   trap - INT TERM EXIT
-  for pid in "${PIDS[@]}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-  for pid in "${PIDS[@]}"; do
-    wait "$pid" 2>/dev/null || true
-  done
-  echo "[local-stack] stopped; logs and demo database remain in ${RUN_DIR}"
+  if [[ ${#PIDS[@]} -gt 0 ]]; then
+    for pid in "${PIDS[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+      fi
+    done
+    for pid in "${PIDS[@]}"; do
+      wait "$pid" 2>/dev/null || true
+    done
+  fi
+  echo "[local-stack] stopped; logs remain in ${RUN_DIR}"
 }
 
 trap cleanup INT TERM EXIT
 
-require_path "$PA_MASTER_DIR"
 require_path "$TRADE_AGENT_DIR"
 require_path "$ROOT_DIR/backend"
 require_path "$ROOT_DIR/frontend"
-require_file "$PA_MASTER_DIR/backend/.venv/bin/alembic"
-require_file "$PA_MASTER_DIR/backend/.venv/bin/python"
 require_file "$TRADE_AGENT_DIR/.venv/bin/trade-research"
 require_file "$ROOT_DIR/backend/.venv/bin/python"
 
-mkdir -p "$RUN_DIR"
-
-PA_ENV=(
-  "PA_DATABASE_URL=sqlite+pysqlite:///${PA_DB}"
-  "PA_NOTION_ENABLED=false"
-  "PA_MARKET_DATA_PROVIDER=manual"
-  "PA_ANALYTICS_AUTH_ENABLED=false"
-)
-
-echo "[local-stack] preparing isolated PA Master demo database: ${PA_DB}"
-(
-  cd "$PA_MASTER_DIR/backend"
-  env "${PA_ENV[@]}" .venv/bin/alembic upgrade head >"${RUN_DIR}/pa-migrate.log" 2>&1
-  env "${PA_ENV[@]}" .venv/bin/python -m pa_investing.scripts.seed_demo_portfolio >"${RUN_DIR}/pa-seed.log" 2>&1
-)
-
-echo "[local-stack] starting PA Master"
-(
-  cd "$PA_MASTER_DIR/backend"
-  env "${PA_ENV[@]}" .venv/bin/uvicorn pa_investing.main:app \
-    --host 127.0.0.1 --port "$PA_MASTER_PORT" \
-    >"${RUN_DIR}/pa-master.log" 2>&1
-) &
-PIDS+=("$!")
-wait_for_url "PA Master" "http://127.0.0.1:${PA_MASTER_PORT}/health"
+mkdir -p "$RUN_DIR" "$VIBE_LOCAL_DATA_DIR"
 
 echo "[local-stack] starting TradeAgent"
 (
@@ -140,8 +148,20 @@ echo "[local-stack] starting Vibe backend"
   VR_TRADE_RESEARCH_ENABLED=true \
   VR_TRADE_RESEARCH_BASE_URL="http://127.0.0.1:${TRADE_AGENT_PORT}" \
   VR_TRADE_RESEARCH_API_TOKEN="$TRADE_RESEARCH_API_TOKEN" \
-  VR_PA_MASTER_ENABLED=true \
-  VR_PA_MASTER_BASE_URL="http://127.0.0.1:${PA_MASTER_PORT}" \
+  VR_DATA_DIR="$VIBE_LOCAL_DATA_DIR" \
+  VR_IBKR_POSITION_STORE="$VIBE_LOCAL_POSITION_STORE" \
+  VR_IBKR_ANALYTICS_STORE="$VIBE_LOCAL_ANALYTICS_STORE" \
+  VR_IBKR_FLEX_TOKEN="${VR_IBKR_FLEX_TOKEN:-}" \
+  VR_IBKR_FLEX_QUERY_ID="${VR_IBKR_FLEX_QUERY_ID:-}" \
+  VR_IBKR_FLEX_HISTORY_QUERY_ID="${VR_IBKR_FLEX_HISTORY_QUERY_ID:-}" \
+  VR_IBKR_FLEX_BASE_URL="${VR_IBKR_FLEX_BASE_URL:-https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService}" \
+  VR_IBKR_FLEX_TIMEZONE="${VR_IBKR_FLEX_TIMEZONE:-Europe/London}" \
+  VR_IBKR_FLEX_COOLDOWN_SECONDS="${VR_IBKR_FLEX_COOLDOWN_SECONDS:-300}" \
+  VR_IBKR_FLEX_TIMEOUT_SECONDS="${VR_IBKR_FLEX_TIMEOUT_SECONDS:-20}" \
+  VR_IBKR_FLEX_REQUEST_RETRIES="${VR_IBKR_FLEX_REQUEST_RETRIES:-1}" \
+  VR_IBKR_FLEX_RETRIES="${VR_IBKR_FLEX_RETRIES:-3}" \
+  VR_IBKR_FLEX_RETRY_DELAY_SECONDS="${VR_IBKR_FLEX_RETRY_DELAY_SECONDS:-5}" \
+  VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS="${VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS:-5}" \
   .venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port "$VIBE_PORT" \
     >"${RUN_DIR}/vibe-backend.log" 2>&1
 ) &
@@ -163,9 +183,11 @@ cat <<EOF
 [local-stack] open: http://127.0.0.1:${FRONTEND_PORT}/portfolio
 [local-stack] skills: http://127.0.0.1:${FRONTEND_PORT}/stock-data
 [local-stack] logs:  ${RUN_DIR}
+[local-stack] data:  ${VIBE_LOCAL_DATA_DIR}
+[local-stack] IBKR diagnostics: tail -f ${RUN_DIR}/vibe-backend.log
 
 Search ASML.AS on the stock-data page, select worth-buy-stocks or markov-method,
-and click Run Analysis. Press Ctrl-C here to stop all four services.
+and click Run Analysis. Press Ctrl-C here to stop all three services.
 EOF
 
 while :; do
