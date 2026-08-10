@@ -7,6 +7,12 @@ export class ApiError extends Error {
   }
 }
 
+export const AUTH_INVALIDATED_EVENT = "vibe-auth-invalidated";
+
+export function notifyAuthInvalidated() {
+  window.dispatchEvent(new Event(AUTH_INVALIDATED_EVENT));
+}
+
 // 后端访问密钥（对应后端部署时的 VR_API_KEY，公网部署防蹭用）。只存本地浏览器。
 const ACCESS_KEY = "vr-access-key";
 
@@ -157,7 +163,10 @@ export interface IbkrPositionChart {
 // 下载/预览研报：带鉴权头 fetch → blob → 触发浏览器下载（<a download> 无法带 Authorization，故走 blob）。
 export async function downloadReport(id: string, name: string): Promise<void> {
   const resp = await fetch(`/api/myreports/file/${id}`, { headers: authHeaders() });
-  if (!resp.ok) throw new ApiError(`下载失败 HTTP ${resp.status}`, resp.status);
+  if (!resp.ok) {
+    if (resp.status === 401) notifyAuthInvalidated();
+    throw new ApiError(`下载失败 HTTP ${resp.status}`, resp.status);
+  }
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -191,6 +200,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE
   }
   if (!resp.ok) {
     if (resp.status === 401) {
+      if (!path.startsWith("/auth/")) notifyAuthInvalidated();
       throw new ApiError("后端需要登录或访问密钥：请先登录，或在「接入 AI」页填写 VR_API_KEY", 401);
     }
     throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { LockKeyhole, Loader2, LogIn } from "lucide-react";
-import { ApiError, api, type AuthSession } from "@/lib/api";
+import { AUTH_INVALIDATED_EVENT, ApiError, api, type AuthSession } from "@/lib/api";
 
 export const AUTH_LOGOUT_EVENT = "vibe-auth-logout";
 
@@ -50,8 +50,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     load();
     const logout = () => api.authLogout().finally(load);
+    const invalidated = () => load();
     window.addEventListener(AUTH_LOGOUT_EVENT, logout);
-    return () => window.removeEventListener(AUTH_LOGOUT_EVENT, logout);
+    window.addEventListener(AUTH_INVALIDATED_EVENT, invalidated);
+    return () => {
+      window.removeEventListener(AUTH_LOGOUT_EVENT, logout);
+      window.removeEventListener(AUTH_INVALIDATED_EVENT, invalidated);
+    };
   }, []);
 
   if (error) return <main className="flex min-h-screen items-center justify-center p-6 text-sm text-destructive">{error} <button onClick={load} className="ml-2 underline">重试</button></main>;

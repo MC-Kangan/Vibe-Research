@@ -2,7 +2,7 @@
 
 import { storageSet, storageRemove } from "@/lib/storage";
 
-import { ApiError, authHeaders } from "./api";
+import { ApiError, authHeaders, notifyAuthInvalidated } from "./api";
 import { isCliProvider, type ProviderId } from "./ai-models";
 
 export interface LlmConfig {
@@ -79,7 +79,8 @@ export async function chatStream(messages: ChatMsg[], context: string, handlers:
     let body: any = null;
     try { body = await resp.json(); } catch { /* ignore */ }
     if (resp.status === 401) {
-      throw new ApiError("后端开启了访问鉴权（VR_API_KEY）：请在「接入 AI」页底部填写后端访问密钥", 401);
+      notifyAuthInvalidated();
+      throw new ApiError("登录已过期或访问密钥无效，请重新登录", 401);
     }
     throw new ApiError(body?.detail || `HTTP ${resp.status}`, resp.status);
   }

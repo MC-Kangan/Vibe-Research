@@ -94,16 +94,19 @@ MCP 的 4 个工具是「零配置、开箱即用」的常用项。若 agent 需
 失败时会保留上一次有效快照；手工持仓记录仍使用原有本地存储。投资目标与风险偏好
 保存到同目录的 `position-preferences.json`，并在用户主动调用持仓 AI 分析时加入提示。
 
-NAS 部署时建议启用 `VR_AUTH_ENABLED=true`、`VR_AUTH_USERNAME`、
-`VR_AUTH_PASSWORD_HASH` 和 `VR_SESSION_SECRET`。密码哈希可这样生成（不会把明文
-密码写入仓库）：
+NAS 部署时建议启用 `VR_AUTH_ENABLED=true`、`VR_AUTH_USERNAME` 和
+`VR_AUTH_PASSWORD_HASH`。用户名和哈希只在首次启动时写入 `/data/auth.sqlite3`；
+密码使用 Argon2id，浏览器使用可立即撤销的 HttpOnly 会话。生成首次哈希：
 
 ```bash
-.venv/bin/python -c 'import getpass; from auth import hash_password; print(hash_password(getpass.getpass()))'
+docker compose run --rm backend python auth.py hash-password
 ```
 
-应用登录使用 HttpOnly 会话 Cookie；`VR_API_KEY` 仍可供脚本调用。远程访问应通过
-Tailscale Serve 暴露前端，不要直接开放 FastAPI、TradeAgent 或数据库端口。
+请使用密码管理器生成至少 15 个字符的密码。在 Compose `.env` 中用单引号包住完整
+哈希，避免 `$` 被插值。忘记或怀疑密码泄露时
+运行 `docker compose exec backend python auth.py reset-password --username admin`；这会
+立刻撤销所有已有会话。`VR_API_KEY` 仍可供脚本调用。远程访问应通过 Tailscale Serve
+暴露前端，不要直接开放 FastAPI、TradeAgent 或数据库端口。
 
 - 数据端点只返回客观行情/研报/财报/新闻，不含任何建议、排名、预测。
 - `/api/chat` 的 system prompt 内置中立红线：不荐股、不预测涨跌、不给买卖时机、不构成投资建议。

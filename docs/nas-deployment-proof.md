@@ -86,13 +86,12 @@ Create `.env` beside `compose.yaml`:
 ```dotenv
 VR_BIND_ADDRESS=127.0.0.1
 VR_WEB_PORT=8080
-VR_PUBLIC_ORIGIN=http://127.0.0.1:8080
+VR_PUBLIC_ORIGIN=https://your-nas.your-tailnet.ts.net
 VR_DATA_PATH=/volume1/docker/vibe-research/data
 VR_API_KEY=
 VR_AUTH_ENABLED=true
 VR_AUTH_USERNAME=admin
-VR_AUTH_PASSWORD_HASH=<generated PBKDF2 hash>
-VR_SESSION_SECRET=<long random value>
+VR_AUTH_PASSWORD_HASH='<generated Argon2id hash>'
 VR_SESSION_TTL_HOURS=12
 VR_AUTH_COOKIE_SECURE=true
 VR_IBKR_FLEX_TOKEN=<server-side IBKR Flex token>
@@ -101,13 +100,37 @@ VR_IBKR_FLEX_TIMEZONE=Europe/London
 VR_IBKR_FLEX_COOLDOWN_SECONDS=300
 ```
 
-Keep `VR_BIND_ADDRESS=127.0.0.1` until the authenticated Tailscale proxy is installed. Do not open router ports, use a DMZ rule, expose port 8900, or enable Tailscale Funnel.
+Generate the first-run hash after building the backend image:
+
+```bash
+docker compose run --rm backend python auth.py hash-password
+```
+
+Use a password-manager-generated password of at least 15 characters, then paste the
+complete output between the single quotes above. The username and hash seed
+`/data/auth.sqlite3` only when it contains no user; subsequent password changes must use
+the reset command below. Keep `VR_BIND_ADDRESS=127.0.0.1` until the authenticated
+Tailscale proxy is installed. Do not open router ports, use a DMZ rule, expose port 8900,
+or enable Tailscale Funnel.
 
 Install and sign in to Tailscale on the NAS and each approved device, then publish only
-the loopback frontend through Tailscale Serve (for example, `tailscale serve --bg
-http://127.0.0.1:8080`). Use the HTTPS tailnet URL shown by Tailscale. Do not publish the
+the loopback frontend through Tailscale Serve (for example, `tailscale serve --bg 8080`).
+Set `VR_PUBLIC_ORIGIN` to the exact HTTPS tailnet URL shown by Tailscale and restart the
+Compose stack. Do not publish the
 backend, TradeAgent, or database ports. The Vibe login screen remains enabled even inside
 the tailnet, so a stolen or shared tailnet device does not automatically expose positions.
+
+Use a Tailscale Grant to permit only the owner's identity to reach the NAS HTTPS service.
+Application authentication remains independent of Tailscale identity headers in this
+single-user deployment.
+
+Reset a forgotten or compromised password from a NAS terminal:
+
+```bash
+docker compose exec backend python auth.py reset-password --username admin
+```
+
+The reset command updates the Argon2id hash and immediately revokes every browser session.
 
 After the first login, open 我的持仓 and click 从 IBKR 刷新. This performs a read-only current
 Flex query and stores a normalized snapshot under the configured data directory. It does
@@ -121,6 +144,7 @@ If the NAS Docker interface cannot consume Compose directly, use its project/Com
 When `VR_DATA_PATH` points to a NAS directory, back up that directory with the NAS snapshot or backup facility. The important contents currently include:
 
 - `portfolio.json`
+- `auth.sqlite3`
 - `myreports/`
 - Any future application-owned persistent files
 
@@ -151,16 +175,15 @@ Rollback by checking out or restoring the previous source version and rebuilding
 
 ## Security boundary before remote access
 
-The deployment now supports an application login with an expiring signed HttpOnly session
-cookie. `VR_API_KEY` remains available for scripts and service-to-service calls, but it is
-not the browser login mechanism.
+The deployment now supports an application login with Argon2id password hashing and an
+expiring opaque HttpOnly session cookie. Only the session hash is stored in SQLite, so
+logout and password reset can revoke access immediately. `VR_API_KEY` remains available
+for scripts and service-to-service calls, but it is not the browser login mechanism.
 
 The next deployment slice should:
 
 - Install Tailscale on the NAS and personal devices.
 - Serve the frontend origin through Tailscale Serve with HTTPS.
 - Keep the Compose frontend bound to loopback.
-- Accept and validate only trusted proxy identity headers at the backend.
-- Add an allowlist for the owner's Tailscale identity.
-- Add `/api/auth/me` and display the signed-in identity.
+- Add a Tailscale Grant for the owner's identity and NAS HTTPS service.
 - Perform a deployment-focused security review before remote use.

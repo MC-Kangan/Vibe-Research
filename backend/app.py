@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import hmac
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -64,9 +63,22 @@ if auth_layer.enabled():
 
 @app.middleware("http")
 async def _require_api_key(request: Request, call_next):
+    is_api = request.url.path.startswith("/api/")
+    if (
+        auth_layer.enabled()
+        and is_api
+        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and auth_layer.request_uses_session(request)
+        and not auth_layer.origin_allowed(request)
+    ):
+        return JSONResponse(
+            {"detail": "Cross-origin session request rejected"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
     if (
         request.method != "OPTIONS"
-        and request.url.path.startswith("/api/")
+        and is_api
         and request.url.path not in {"/api/health", "/api/auth/session", "/api/auth/login", "/api/auth/logout"}
     ):
         if _API_KEY and auth_layer.bearer_authorized(request, _API_KEY):
@@ -74,8 +86,15 @@ async def _require_api_key(request: Request, call_next):
         if auth_layer.enabled() and auth_layer.session_username(request):
             return await call_next(request)
         if _API_KEY or auth_layer.enabled():
-            return JSONResponse({"detail": "未授权：请登录或提供有效的 API Key"}, status_code=401)
-    return await call_next(request)
+            return JSONResponse(
+                {"detail": "未授权：请登录或提供有效的 API Key"},
+                status_code=401,
+                headers={"Cache-Control": "no-store"},
+            )
+    response = await call_next(request)
+    if auth_layer.enabled() and is_api and request.url.path != "/api/health":
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 _CODE_RE = r"^\d{6}$"
 
@@ -104,8 +123,8 @@ def health():
 
 
 class AuthLoginReq(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=1024)
 
 
 @app.get("/api/auth/session")
@@ -125,19 +144,22 @@ def auth_login(req: AuthLoginReq, response: Response):
     if not auth_layer.enabled():
         raise HTTPException(404, "Application authentication is disabled")
     if not auth_layer.login_allowed():
-        raise HTTPException(429, "Too many failed login attempts; try again later")
-    expected_username = os.environ.get("VR_AUTH_USERNAME", "").strip()
-    expected_hash = os.environ.get("VR_AUTH_PASSWORD_HASH", "").strip()
-    if not hmac.compare_digest(req.username.strip(), expected_username) or not auth_layer.verify_password(req.password, expected_hash):
-        auth_layer.record_failed_login()
+        raise HTTPException(
+            429,
+            "Too many failed login attempts; try again later",
+            headers={"Retry-After": "900"},
+        )
+    token = auth_layer.authenticate(req.username, req.password)
+    if token is None:
         raise HTTPException(401, "Invalid username or password")
-    auth_layer.clear_failed_logins()
-    auth_layer.set_session_cookie(response, auth_layer.issue_session(expected_username))
-    return {"data": {"enabled": True, "authenticated": True, "username": expected_username}}
+    username = req.username.strip()
+    auth_layer.set_session_cookie(response, token)
+    return {"data": {"enabled": True, "authenticated": True, "username": username}}
 
 
 @app.post("/api/auth/logout")
-def auth_logout(response: Response):
+def auth_logout(request: Request, response: Response):
+    auth_layer.revoke_session(request.cookies.get(auth_layer.cookie_name(), ""))
     auth_layer.clear_session_cookie(response)
     return {"data": {"authenticated": False}}
 

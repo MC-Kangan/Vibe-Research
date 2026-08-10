@@ -2,7 +2,7 @@
 // 抽出来是因为多 agent 流程的事件类型比对话多（阶段、进度、分角色增量），
 // 各页面只关心事件本身，不该各写一遍拆行/解码逻辑。
 
-import { ApiError, authHeaders } from "@/lib/api";
+import { ApiError, authHeaders, notifyAuthInvalidated } from "@/lib/api";
 
 export type NdjsonEvent = Record<string, any>;
 
@@ -34,7 +34,8 @@ export async function streamNdjson(
     let detail: any = null;
     try { detail = await resp.json(); } catch { /* 无 JSON body 就用状态码兜底 */ }
     if (resp.status === 401) {
-      throw new ApiError("后端开启了访问鉴权（VR_API_KEY）：请在「接入 AI」页底部填写后端访问密钥", 401);
+      notifyAuthInvalidated();
+      throw new ApiError("登录已过期或访问密钥无效，请重新登录", 401);
     }
     throw new ApiError(detail?.detail || `HTTP ${resp.status}`, resp.status);
   }

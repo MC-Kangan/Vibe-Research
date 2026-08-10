@@ -330,11 +330,13 @@ Do not copy API keys, AWS credentials, uploaded reports, portfolios, or Tailscal
 
 ## Requirement 7: Remote access and authentication
 
-### Current authentication limitation
+### Current authentication boundary
 
-The existing `VR_API_KEY` middleware protects `/api/*` with one long-lived shared bearer token. It does not provide real user identity, sessions, per-device revocation, login/logout, MFA, or protection of the frontend itself. The browser stores the secret in `localStorage`.
-
-It can remain as a temporary development control or service credential, but it should not be the primary human-authentication mechanism for remote use.
+The application now has a single-user browser login backed by SQLite. Passwords use
+Argon2id, browser sessions are opaque and stored only as hashes, and logout or an
+administrative password reset revokes sessions immediately. Secure deployments use a
+`__Host-` HttpOnly, Secure, SameSite=Strict cookie. `VR_API_KEY` remains available for
+scripts and service-to-service calls and is not the primary browser mechanism.
 
 ### Recommended option: Tailscale Serve
 
@@ -343,10 +345,13 @@ For a single personal user, use Tailscale on the NAS, phone, and laptops:
 - Keep the application unavailable on the public internet.
 - Permit only the owner's Tailscale identity to reach the application.
 - Use Tailscale Serve for HTTPS and reverse proxying.
-- Read verified Tailscale identity headers in a backend middleware.
-- Allow only configured user identities, for example through `VR_ALLOWED_USERS`.
-- Add `/api/auth/me` for the UI to show the current authenticated identity.
-- Ensure the origin service is reachable only by the trusted proxy/container path.
+- Keep the independent Vibe Research password screen as a second access gate.
+- Keep the origin bound to loopback and publish only the frontend proxy.
+- Use an explicit Tailscale Grant for the owner's identity and the NAS HTTPS service.
+
+For this single-user deployment, the backend does not need to trust forwarded Tailscale
+identity headers. That integration can be reconsidered if the application becomes
+multi-user and needs identity-specific authorization.
 
 Do not use Tailscale Funnel for this private application.
 
