@@ -5,11 +5,19 @@ import test from "node:test";
 const layout = readFileSync(new URL("../src/components/layout/Layout.tsx", import.meta.url), "utf8");
 const portfolio = readFileSync(new URL("../src/components/portfolio/RealPositionPanel.tsx", import.meta.url), "utf8");
 
-test("mobile uses a bottom navigation instead of consuming the content width", () => {
-  assert.match(layout, /flex h-\[100dvh\] flex-col md:flex-row/);
-  assert.match(layout, /order-2[^\n]+md:order-none/);
-  assert.match(layout, /overflow-x-auto[^\n]+md:block/);
-  assert.match(layout, /pb-\[env\(safe-area-inset-bottom\)\]/);
+test("mobile uses an accessible overlay drawer instead of a crowded bottom navigation", () => {
+  assert.match(layout, /mobileOpen \? "translate-x-0" : "-translate-x-\[calc\(100%\+1rem\)\]"/);
+  assert.match(layout, /aria-controls="app-navigation"/);
+  assert.match(layout, /aria-expanded=\{mobileOpen\}/);
+  assert.match(layout, /aria-label="关闭导航菜单"/);
+  assert.match(layout, /event\.key === "Escape"/);
+  assert.doesNotMatch(layout, /overflow-x-auto/);
+});
+
+test("desktop sidebar can fully hide and expands the analysis canvas", () => {
+  assert.match(layout, /md:w-0[^\n]+md:opacity-0[^\n]+md:pointer-events-none/);
+  assert.match(layout, /aria-label="显示侧栏"/);
+  assert.match(layout, /collapsed \? "max-w-\[1440px\]" : "max-w-6xl"/);
 });
 
 test("portfolio chart and controls adapt to narrow phone widths", () => {
