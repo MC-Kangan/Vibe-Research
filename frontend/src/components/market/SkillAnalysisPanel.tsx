@@ -125,7 +125,7 @@ function ReportTable({ title, rows }: { title: string; rows?: Json[] }) {
   return <section><h4 className="mb-2 text-sm font-semibold">{title}</h4><div className="overflow-x-auto rounded-lg border border-border/60"><table className="w-full text-left text-xs"><thead className="bg-muted/30 text-muted-foreground"><tr><th className="p-2">Check</th><th className="p-2">Status</th><th className="p-2">Value</th></tr></thead><tbody>{(rows || []).map((row) => <tr key={row.key} className="border-t border-border/40"><td className="p-2">{row.key}</td><td className="p-2">{row.status}</td><td className="p-2 font-mono">{row.value ?? "—"}</td></tr>)}</tbody></table></div></section>;
 }
 
-export function SkillAnalysisPanel({ symbol, supported }: { symbol: string | null; supported: boolean }) {
+export function SkillAnalysisPanel({ symbol, supported, assetType = "equity" }: { symbol: string | null; supported: boolean; assetType?: "equity" | "crypto" }) {
   const [skills, setSkills] = useState<ResearchSkill[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [parameters, setParameters] = useState<Record<string, Record<string, unknown>>>({});
@@ -137,10 +137,10 @@ export function SkillAnalysisPanel({ symbol, supported }: { symbol: string | nul
   useEffect(() => {
     if (!symbol || !supported) return;
     api.researchSkills().then((payload) => {
-      setSkills(payload.skills || []);
+      setSkills((payload.skills || []).filter((skill) => !skill.supported_asset_types || skill.supported_asset_types.includes(assetType)));
       setStatus(payload.status === "available" ? null : payload.detail || "TradeAgent is not configured");
     }).catch((error: unknown) => setStatus(error instanceof ApiError ? error.message : "Research skills unavailable"));
-  }, [symbol, supported]);
+  }, [symbol, supported, assetType]);
 
   if (!symbol || !supported) return null;
   const toggleSkill = (skill: ResearchSkill) => {
@@ -154,7 +154,7 @@ export function SkillAnalysisPanel({ symbol, supported }: { symbol: string | nul
   const runSelected = async () => {
     if (!selected.length || !symbol) return;
     setLoading(true); setStatus(null); setRun(null); setActive(0);
-    try { setRun(await api.runResearch(symbol, selected, parameters)); }
+    try { setRun(await api.runResearch(symbol, selected, parameters, assetType)); }
     catch (error: unknown) { setStatus(error instanceof ApiError ? error.message : "Research failed"); }
     finally { setLoading(false); }
   };

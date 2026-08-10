@@ -8,6 +8,8 @@ import { api, ApiError, type PortfolioData } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { normalizeStockSymbol } from "@/lib/market-symbols";
 import { RealPositionPanel } from "@/components/portfolio/RealPositionPanel";
+import { PortfolioOverview } from "@/components/portfolio/PortfolioOverview";
+import { CryptoPortfolioPanel } from "@/components/portfolio/CryptoPortfolioPanel";
 import { investmentProfileContext, portfolioAiInstruction, portfolioAiNumber, portfolioNumber, portfolioValuePercent } from "@/lib/portfolio-format";
 
 const REFRESH_MS = 30 * 60 * 1000; // 每半小时自动刷新
@@ -16,6 +18,7 @@ const fmt = portfolioNumber;
 const fmtPx = portfolioNumber;
 
 export function Portfolio() {
+  const [section, setSection] = useState<"overview" | "stocks" | "crypto">("overview");
   const [data, setData] = useState<PortfolioData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -135,7 +138,7 @@ export function Portfolio() {
       <PageHeader
         title="我的持仓"
         subtitle="IBKR 实际持仓为主；手工记录仍保留在本地"
-        actions={view === "manual" ? (
+        actions={section === "stocks" && view === "manual" ? (
           <div className="flex items-center gap-2">
             {holdings.length > 0 && (
               <AskAiButton context={aiContext} label="让 AI 看我的持仓"
@@ -149,6 +152,12 @@ export function Portfolio() {
           </div>
         ) : undefined}
       />
+
+      <div className="mb-5 flex gap-1 rounded-lg border border-border/60 bg-muted/20 p-1">{([['overview', '总览'], ['stocks', '股票'], ['crypto', '加密货币']] as const).map(([value, label]) => <button key={value} onClick={() => setSection(value)} className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${section === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>{label}</button>)}</div>
+
+      {section === "overview" && <PortfolioOverview />}
+      {section === "crypto" && <CryptoPortfolioPanel />}
+      {section === "stocks" && <>
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
@@ -240,7 +249,7 @@ export function Portfolio() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "现价", "数量", "成本", "市值", "浮动盈亏", "盈亏%", ""].map((h) => (
+                  {["名称", "现价", "数量", "成本", "市值", "浮动盈亏", "盈亏%", "计入总览", ""].map((h) => (
                     <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -258,6 +267,7 @@ export function Portfolio() {
                     <td className="px-2 py-2.5 font-mono">{fmt(h.market_value)}</td>
                     <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{h.pnl != null && h.pnl > 0 ? "+" : ""}{fmt(h.pnl)}</td>
                     <td className={cn("px-2 py-2.5 font-mono", pnlColor(h.pnl))}>{portfolioValuePercent(h.pnl_pct)}</td>
+                    <td className="px-2 py-2.5"><input type="checkbox" checked={h.include_in_total} onChange={async (event) => setData(await api.setHoldingInTotal(h.code, event.target.checked))} aria-label={`${h.code}计入总览`} /></td>
                     <td className="px-2 py-2.5">
                       <button onClick={() => remove(h.code)} className="text-muted-foreground/50 hover:text-destructive" title="删除">
                         <Trash2 className="h-3.5 w-3.5" />
@@ -356,6 +366,8 @@ export function Portfolio() {
           </div>
         )}
       </GlassCard>
+
+      </>}
 
       </>}
 

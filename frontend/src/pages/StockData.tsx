@@ -83,6 +83,7 @@ function ValBand({ label, m }: { label: string; m: ValMetric }) {
 }
 
 export function StockData() {
+  const [assetType, setAssetType] = useState<"equity" | "crypto">("equity");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -125,6 +126,26 @@ export function StockData() {
     setGStock(null); setCashflow(null); setMarketSnapshot(null); setMarketHistory(null);
     setMarketNews(null); setMarketEarnings(null); setMarketFilings(null); setMarketSecFacts(null); setMarketSourceGaps([]);
     setAShareHistory(null);
+
+    if (assetType === "crypto") {
+      try {
+        const [snapshot, history] = await Promise.all([
+          api.marketSnapshot(c, "crypto"),
+          api.marketBars(c, "1y", "1d", "crypto"),
+        ]);
+        if (rid === runIdRef.current) {
+          setCode(snapshot.instrument.symbol);
+          setMarketSnapshot(snapshot);
+          setMarketHistory(history);
+          setMarketSourceGaps(["传统公司基本面与估值不适用", "链上资金流与代币解锁数据尚未接入"]);
+        }
+      } catch (e) {
+        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : "查询失败");
+      } finally {
+        if (rid === runIdRef.current) setLoading(false);
+      }
+      return;
+    }
 
     const route = stockDataRoute(c);
 
@@ -264,7 +285,7 @@ export function StockData() {
         : "")
     : "";
   const marketAiContext = marketSnapshot && marketHistory
-    ? `个股：${marketSnapshot.instrument.name}（${marketSnapshot.instrument.provider_symbol}）\n` +
+    ? `${marketSnapshot.instrument.asset_type === "crypto" ? "加密货币" : "个股"}：${marketSnapshot.instrument.name}（${marketSnapshot.instrument.provider_symbol}）\n` +
       `交易所 ${marketSnapshot.instrument.exchange} · 现价 ${marketSnapshot.quote.price ?? "—"} ${marketSnapshot.quote.currency} · 涨跌 ${pctStr(marketSnapshot.quote.change_pct)}\n` +
       `近一年日线共 ${marketHistory.bars.length} 条；数据源 ${marketSnapshot.quote.source}。\n` +
       (gstock?.metrics ? gAiContext : "基本面、公告、监管文件与个股新闻数据尚未接齐，分析时必须明确这些缺口。")
@@ -273,8 +294,8 @@ export function StockData() {
   return (
     <div>
       <PageHeader
-        title="个股数据"
-        subtitle="行情 · 估值 · 研报 · 新闻 —— 客观数据配齐，判断交给你的 AI"
+        title="标的数据"
+        subtitle="股票与加密货币共享行情、图表和兼容技能；专项数据按能力明确区分"
         actions={(val || gstock || marketSnapshot) && (
           <AskAiButton
             context={marketSnapshot ? marketAiContext : gstock ? gAiContext : aiContext}
@@ -284,11 +305,15 @@ export function StockData() {
             scopeKey={marketSnapshot ? `m:${marketSnapshot.instrument.provider_symbol}` : gstock ? `g:${gstock.code}` : val?.code}
             label="让 AI 读这些数据"
             suggestions={(gstock || marketSnapshot)
-              ? ["这家公司基本面怎么样", "盈利能力如何", "有什么风险"]
+              ? (marketSnapshot?.instrument.asset_type === "crypto" ? ["价格结构有什么特征", "市场环境如何", "有哪些数据缺口"] : ["这家公司基本面怎么样", "盈利能力如何", "有什么风险"])
               : ["这个估值贵不贵", "机构一致预期怎么看", "近期研报的分歧点", "有什么风险"]}
           />
         )}
       />
+
+      <div className="mb-3 flex w-fit gap-1 rounded-lg border border-border/60 bg-muted/20 p-1">
+        {([['equity', '股票'], ['crypto', '加密货币']] as const).map(([value, label]) => <button key={value} onClick={() => { setAssetType(value); setCode(""); setErr(null); setMarketSnapshot(null); setMarketHistory(null); }} className={`rounded-md px-4 py-1.5 text-sm ${assetType === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>{label}</button>)}
+      </div>
 
       {/* 查询框 */}
       <div className="mb-5 flex flex-wrap gap-2">
@@ -296,8 +321,8 @@ export function StockData() {
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))}
           onKeyDown={(e) => e.key === "Enter" && run()}
-          placeholder="A股、美股（AAPL）或欧洲代码（VOD.L / SAP.DE）"
-          aria-label="股票代码"
+          placeholder={assetType === "crypto" ? "BTC / ETH / SOL" : "A股、美股（AAPL）或欧洲代码（VOD.L / SAP.DE）"}
+          aria-label={assetType === "crypto" ? "加密货币代码" : "股票代码"}
           className="min-w-0 flex-1 basis-64 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
         />
         <button
@@ -687,8 +712,8 @@ export function StockData() {
       {!val && !gstock && !marketSnapshot && !err && !loading && (
         <GlassCard>
           <div className="py-10 text-center text-sm text-muted-foreground">
-            输入 A 股、美股或带交易所后缀的欧洲股票代码。<br />
-            <span className="text-xs text-muted-foreground/60">海外首期提供 Yahoo 行情与历史价格；基本面、公告和新闻按已接入来源如实显示。</span>
+            {assetType === "crypto" ? "输入 BTC、ETH、SOL 等 Coinbase USD 现货代码。" : "输入 A 股、美股或带交易所后缀的欧洲股票代码。"}<br />
+            <span className="text-xs text-muted-foreground/60">{assetType === "crypto" ? "加密货币提供 Coinbase 行情、UTC 日线和兼容技能；不显示不适用的公司基本面。" : "海外首期提供 Yahoo 行情与历史价格；基本面、公告和新闻按已接入来源如实显示。"}</span>
           </div>
         </GlassCard>
       )}
@@ -697,6 +722,7 @@ export function StockData() {
         key={marketSnapshot?.instrument.provider_symbol || val?.code || "none"}
         symbol={marketSnapshot?.instrument.provider_symbol || val?.code || null}
         supported={Boolean(marketSnapshot || val)}
+        assetType={assetType}
       />
 
       <Disclaimer />

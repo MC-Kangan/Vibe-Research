@@ -45,6 +45,7 @@ export interface ResearchSkill {
       type?: string; default?: string | number | boolean; minimum?: number; maximum?: number;
     }>;
   } | null;
+  supported_asset_types?: Array<"equity" | "crypto">;
 }
 export interface ResearchSkillsResponse {
   configured: boolean;
@@ -357,6 +358,7 @@ export interface Holding {
   code: string; name: string; price: number | null; shares: number; cost: number;
   market_value: number | null; pnl: number | null; pnl_pct: number | null; currency: string;
   quote_available: boolean;
+  include_in_total: boolean;
 }
 export interface ClosedPosition {
   code: string; name: string; date: string; price: number; shares: number; cost: number;
@@ -428,9 +430,10 @@ export interface HkCashflow {
 
 // 美股/欧洲原生上市股票（规范化 Yahoo personal-use 行情契约）
 export interface MarketInstrument {
-  instrument_id: string; asset_type: "equity"; symbol: string; provider_symbol: string;
+  instrument_id: string; asset_type: "equity" | "crypto"; symbol: string; provider_symbol: string;
   name: string; exchange: string; mic: string; country: string;
   currency: string; timezone: string | null;
+  base_asset?: string | null; quote_asset?: string | null; capabilities?: string[];
 }
 export interface MarketQuote {
   price: number | null; open: number | null; high: number | null; low: number | null;
@@ -438,6 +441,7 @@ export interface MarketQuote {
   source_price: number | null; source_price_unit: string; price_scale: number;
   market_state: string | null; observed_at: string | null; fetched_at: string;
   delay_seconds: number | null; source: string;
+  is_stale?: boolean;
 }
 export interface MarketSnapshot { instrument: MarketInstrument; quote: MarketQuote }
 export interface MarketHistoricalBar {
@@ -447,6 +451,37 @@ export interface MarketHistoricalBar {
 export interface MarketHistoricalSeries {
   provider_symbol: string; range: string; interval: string; source: string;
   fetched_at: string; bars: MarketHistoricalBar[];
+}
+export interface CryptoOverviewAsset {
+  id: string | null; symbol: string; name: string; rank: number | null;
+  market_cap: number | null; volume_24h: number | null; change_24h_pct: number | null;
+  circulating_supply: number | null; ath: number | null; coinbase_available: boolean;
+  price: number | null; price_currency: string; price_source: string | null;
+}
+export interface CryptoOverview {
+  fetched_at: string; sources: { prices: string; market_metadata: string | null; market_metadata_stale?: boolean };
+  global: { total_market_cap_usd: number | null; total_volume_24h_usd: number | null; market_cap_change_24h_pct: number | null; btc_dominance_pct: number | null; eth_dominance_pct: number | null };
+  breadth: { total: number; up: number; down: number; flat: number };
+  assets: CryptoOverviewAsset[]; gaps: string[];
+}
+export interface CryptoPosition {
+  source: "coinbase" | "manual"; wallet_label: string; asset: string; quantity: number;
+  asset_kind?: "fiat" | "crypto"; cash_like: boolean; unit_cost?: number | null; cost_currency?: string;
+  price?: number | null; price_currency?: string; reporting_market_value?: number | null;
+  reporting_currency?: string; cost_value?: number | null; pnl?: number | null;
+}
+export interface CoinbasePositionSnapshot {
+  status: "available" | "empty" | "not_configured" | "error"; source: "coinbase";
+  refreshed_at: string | null; positions: CryptoPosition[]; warnings: string[];
+}
+export interface CryptoPortfolioData {
+  reporting_currency: string; positions: CryptoPosition[]; assets: Array<{ asset: string; quantity: number; reporting_market_value: number | null; reporting_currency: string; cash_like: boolean; sources: Array<{ source: string; wallet_label: string; quantity: number }> }>; fiat_positions: CryptoPosition[];
+  total: number; cash_like_total: number; fiat_total: number; gaps: string[];
+  coinbase: CoinbasePositionSnapshot; manual: CryptoPosition[];
+}
+export interface PortfolioSummary {
+  reporting_currency: string; stock: number; crypto: number; cash: number; total: number;
+  cash_like_crypto: number; weights: { stock: number; crypto: number; cash: number }; gaps: string[];
 }
 export interface AShareHistoricalBar {
   date: string; open: number | null; high: number | null; low: number | null;
@@ -493,10 +528,11 @@ export const api = {
     request<IntelligenceFeed>("/intelligence/feed", "POST", { symbols, kinds, limit_per_symbol: limitPerSymbol }),
   globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
   hkCashflow: (symbol: string) => get<HkCashflow>(`/global/hk/cashflow?symbol=${encodeURIComponent(symbol)}`),
-  marketSnapshot: (symbol: string) => get<MarketSnapshot>(`/market-data/snapshot?symbol=${encodeURIComponent(symbol)}`),
-  marketBars: (symbol: string, range = "1y", interval = "1d") => get<MarketHistoricalSeries>(
-    `/market-data/bars?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}`,
+  marketSnapshot: (symbol: string, assetType: "equity" | "crypto" = "equity") => get<MarketSnapshot>(`/market-data/snapshot?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}`),
+  marketBars: (symbol: string, range = "1y", interval = "1d", assetType: "equity" | "crypto" = "equity") => get<MarketHistoricalSeries>(
+    `/market-data/bars?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&asset_type=${assetType}`,
   ),
+  cryptoOverview: () => get<CryptoOverview>("/market-data/crypto/overview"),
   aShareBars: (code: string, offset = 240) => get<AShareHistoricalBar[]>(`/kline?code=${encodeURIComponent(code)}&category=4&offset=${offset}`),
   marketNews: (symbol: string, days = 30) => get<MarketNews>(
     `/market-data/news?symbol=${encodeURIComponent(symbol)}&days=${days}`,
@@ -510,6 +546,14 @@ export const api = {
   addHolding: (code: string, shares: number, cost: number) => request<PortfolioData>("/portfolio/holding", "POST", { code, shares, cost }),
   removeHolding: (code: string) => request<PortfolioData>(`/portfolio/holding?code=${encodeURIComponent(code)}`, "DELETE"),
   refreshPortfolio: () => request<PortfolioData>("/portfolio/refresh", "POST"),
+  setHoldingInTotal: (code: string, includeInTotal: boolean) => request<PortfolioData>(`/portfolio/holding/total?code=${encodeURIComponent(code)}`, "PUT", { include_in_total: includeInTotal }),
+  cryptoPortfolio: (reportingCurrency = "USD") => get<CryptoPortfolioData>(`/portfolio/crypto?reporting_currency=${encodeURIComponent(reportingCurrency)}`),
+  refreshCryptoPositions: () => request<CoinbasePositionSnapshot>("/positions/crypto/refresh", "POST"),
+  upsertManualCrypto: (item: { wallet_label: string; asset: string; quantity: number; unit_cost?: number | null; cost_currency?: string }) => request<CryptoPosition[]>("/portfolio/crypto/manual", "POST", item),
+  removeManualCrypto: (walletLabel: string, asset: string) => request<CryptoPosition[]>(`/portfolio/crypto/manual?wallet_label=${encodeURIComponent(walletLabel)}&asset=${encodeURIComponent(asset)}`, "DELETE"),
+  previewCryptoCsv: (content: string) => request<{ rows: CryptoPosition[] }>("/portfolio/crypto/import/preview", "POST", { content }),
+  importCryptoCsv: (content: string) => request<CryptoPosition[]>("/portfolio/crypto/import", "POST", { content }),
+  portfolioSummary: (reportingCurrency?: string) => get<PortfolioSummary>(`/portfolio/summary${reportingCurrency ? `?reporting_currency=${encodeURIComponent(reportingCurrency)}` : ""}`),
   authSession: () => get<AuthSession>("/auth/session"),
   authLogin: (username: string, password: string) => request<AuthSession>("/auth/login", "POST", { username, password }),
   authLogout: () => request<{ authenticated: boolean }>("/auth/logout", "POST"),
@@ -548,8 +592,8 @@ export const api = {
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   myReports: () => get<MyReport[]>("/myreports"),
   researchSkills: () => get<ResearchSkillsResponse>("/research/skills"),
-  runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}) =>
-    request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters }),
+  runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}, assetType: "equity" | "crypto" = "equity") =>
+    request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters, asset_type: assetType }),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),

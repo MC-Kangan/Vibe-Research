@@ -33,6 +33,11 @@ export function isSupportedStockSymbol(symbol: string): boolean {
   return normalizeStockSymbol(symbol) !== null;
 }
 
+export function normalizeCryptoSymbol(symbol: string): string | null {
+  const normalized = symbol.trim().toUpperCase().replace(/-USD$/, "");
+  return /^[A-Z0-9]{2,12}$/.test(normalized) ? normalized : null;
+}
+
 export function stockDataRoute(symbol: string): StockDataRoute {
   if (isAShareSymbol(symbol)) return "a-share";
   if (isEuropeanSymbol(symbol) || isUSSymbol(symbol)) return "market";

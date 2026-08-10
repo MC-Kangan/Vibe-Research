@@ -55,6 +55,11 @@ _MARKET_DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
     ("query_market_snapshot", {}, "Yahoo 行情快照", True, False),
     ("query_market_bars", {"range": "1y"}, "近一年日线价格与成交量", True, False),
 ]
+_CRYPTO_DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
+    ("query_crypto_snapshot", {}, "Coinbase 行情快照", True, False),
+    ("query_crypto_bars", {"range": "1y"}, "近一年 UTC 日线价格与成交量", True, False),
+    ("query_crypto_context", {}, "市值、供应量与全市场上下文", True, True),
+]
 _US_FUNDAMENTAL_SPEC = ("query_global_stock", {}, "关键财务指标（现有海外源）", True, False)
 _MARKET_EVENT_SPEC: list[tuple[str, dict, str, bool, bool]] = [
     ("query_market_news", {"days": 30}, "近期公司新闻（Finnhub trial）", True, True),
@@ -66,7 +71,9 @@ _US_SEC_SPEC: list[tuple[str, dict, str, bool, bool]] = [
 ]
 
 
-def _dossier_spec(symbol: str) -> list[tuple[str, dict, str, bool, bool]]:
+def _dossier_spec(symbol: str, asset_type: str = "equity") -> list[tuple[str, dict, str, bool, bool]]:
+    if asset_type == "crypto":
+        return _CRYPTO_DOSSIER_SPEC
     if symbol.isdigit() and len(symbol) == 6:
         return _DOSSIER_SPEC
     resolved = market_data.resolve_symbol(symbol)
@@ -75,7 +82,9 @@ def _dossier_spec(symbol: str) -> list[tuple[str, dict, str, bool, bool]]:
     return [*_MARKET_DOSSIER_SPEC, *_MARKET_EVENT_SPEC]
 
 
-def _known_market_gaps(symbol: str) -> list[str]:
+def _known_market_gaps(symbol: str, asset_type: str = "equity") -> list[str]:
+    if asset_type == "crypto":
+        return ["传统公司基本面与估值不适用", "监管文件与 earnings 不适用", "链上资金流与代币解锁数据未接入"]
     if symbol.isdigit() and len(symbol) == 6:
         return []
     resolved = market_data.resolve_symbol(symbol)
@@ -167,12 +176,13 @@ def _fetch_section(spec: tuple[str, dict, str, bool, bool], code: str) -> dict:
     elif name in {
         "query_market_snapshot", "query_market_bars", "query_global_stock",
         "query_market_news", "query_market_earnings", "query_us_filings", "query_us_sec_facts",
+        "query_crypto_snapshot", "query_crypto_bars", "query_crypto_context",
     }:
         args = {"symbol": code, **extra}
     else:
         args = {"code": code, **extra}
     result = tools.exec_tool(name, args)
-    if name == "query_market_bars" and not (isinstance(result, dict) and result.get("error")):
+    if name in {"query_market_bars", "query_crypto_bars"} and not (isinstance(result, dict) and result.get("error")):
         result = _compact_market_bars(result)
 
     if isinstance(result, dict) and result.get("error"):
@@ -186,13 +196,13 @@ def _fetch_section(spec: tuple[str, dict, str, bool, bool], code: str) -> dict:
     return {"title": title, "tool": name, "data": result, "ok": True}
 
 
-def collect_dossier(code: str):
+def collect_dossier(code: str, asset_type: str = "equity"):
     """生成器：逐项 yield 进度事件，跑完 return 完整底稿。
 
     调用方用 `dossier = yield from collect_dossier(code)` 即可边推进度边拿结果——
     13 项串行要一分多钟，没有进度反馈的话前端就是一分钟白屏。
     """
-    spec_list = _dossier_spec(code)
+    spec_list = _dossier_spec(code, asset_type)
     done: dict[str, dict] = {}
     total = len(spec_list)
     par = [s for s in spec_list if s[3]]
@@ -219,7 +229,7 @@ def collect_dossier(code: str):
         yield {"type": "dossier_progress", "title": sec["title"], "ok": sec["ok"],
                "loaded": len(done), "total": total}
 
-    sections, missing = [], _known_market_gaps(code)
+    sections, missing = [], _known_market_gaps(code, asset_type)
     for _n, _e, title, _p, _ok in spec_list:  # 按清单顺序还原，保证底稿可读性稳定
         sec = done.get(title)
         if sec and sec["ok"]:
@@ -229,9 +239,9 @@ def collect_dossier(code: str):
     return {"code": code, "sections": sections, "missing": missing}
 
 
-def build_dossier(code: str) -> dict:
+def build_dossier(code: str, asset_type: str = "equity") -> dict:
     """同步版底稿（供测试与非流式调用）：跑完生成器取其返回值。"""
-    gen = collect_dossier(code)
+    gen = collect_dossier(code, asset_type)
     try:
         while True:
             next(gen)
@@ -261,14 +271,14 @@ _COMMON_RULES = """
 """
 
 _ROLE_PROMPTS = {
-    "bull": """你是一名**多方研究员**。基于底稿，找出支持这家公司基本面向好的证据，尽可能有力地立论。
+    "bull": """你是一名**多方研究员**。基于底稿，找出支持这个标的投资逻辑的客观证据，尽可能有力地立论。
 输出格式：
 1. **核心论点**（一句话）
 2. **支撑证据**（3-5 条，每条：论据 + 依据的具体数据）
 3. **这套逻辑成立的前提**（列出你的论点依赖哪些条件继续成立）
 """ + _COMMON_RULES,
 
-    "bear": """你是一名**空方研究员**。基于底稿，找出这家公司基本面与估值上的风险与疑点，尽可能有力地质疑。
+    "bear": """你是一名**空方研究员**。基于底稿，找出这个标的在价格结构、估值或市场环境上的风险与疑点，尽可能有力地质疑。
 输出格式：
 1. **核心质疑**（一句话）
 2. **风险证据**（3-5 条，每条：疑点 + 依据的具体数据）
@@ -328,7 +338,7 @@ def _build_messages(stage: str, facts: str, transcript: list[dict]) -> list[dict
             {"role": "user", "content": "\n\n".join(user_parts) + "\n\n请按你的角色要求输出。"}]
 
 
-def run_debate_stream(cfg: dict, code: str, rounds: int = 1):
+def run_debate_stream(cfg: dict, code: str, rounds: int = 1, asset_type: str = "equity"):
     """跑一场辩论，yield NDJSON 事件。
 
     事件类型：dossier（底稿就绪）/ stage（角色开始）/ delta（增量文本）/
@@ -338,7 +348,7 @@ def run_debate_stream(cfg: dict, code: str, rounds: int = 1):
     is_cli = provider.startswith("cli-")
 
     yield {"type": "status", "message": "正在拉取客观事实底稿…"}
-    dossier = yield from collect_dossier(code)
+    dossier = yield from collect_dossier(code, asset_type)
     # 只有「无记录」说明、没有一条真实数据时同样算取数失败——
     # 让多空基于一份全是「未取到」的底稿互相质疑毫无意义。
     if not any(not isinstance(s["data"], str) for s in dossier["sections"]):

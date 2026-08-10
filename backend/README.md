@@ -37,9 +37,12 @@ python3 -m venv .venv
 | `GET /api/market/overview` · `/api/radar` | 市场情绪+板块资金 · 资讯雷达 | akshare / stdlib |
 | `POST /api/chat` | 系统 AI 对话（function calling，AI 自己调数据工具） | requests |
 | `POST /api/debate` | **多空辩论**（多 agent，流式 NDJSON）：事实底稿 → 多方 / 空方 →（可选反驳）→ 中立主持 | requests |
+| `GET /api/market-data/crypto/overview` | BTC + 大市值 altcoins、总市值、成交量与主导率 | Coinbase + optional CoinGecko |
+| `GET /api/portfolio/crypto` | Coinbase 与手工钱包的本地加密持仓视图 | Coinbase + local JSON |
+| `GET /api/portfolio/summary` | 股票、加密货币与现金的统一报告币种汇总 | IBKR + Coinbase + local holdings |
 | `POST /api/reflect` | **反思审计**（流式 NDJSON）：对一段已写好的分析做推理审计 | requests |
 
-`/api/debate` 请求体：`{"code": "600519", "rounds": 1, "llm": {...}}`（`rounds=2` 加一轮交叉反驳）。
+`/api/debate` 请求体：`{"code": "600519", "asset_type": "equity", "rounds": 1, "llm": {...}}`（`asset_type` 默认为 `equity`；加密货币传 `crypto`；`rounds=2` 加一轮交叉反驳）。
 事件类型：`status` · `dossier_progress`（底稿逐项进度）· `dossier` · `stage`（角色开始）·
 `delta`（增量文本）· `stage_done`（角色完成，失败时带 `failed: true`）· `done` · `error`。
 

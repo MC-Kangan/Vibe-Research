@@ -55,9 +55,10 @@ export async function debateStream(
   rounds: number,
   handlers: DebateHandlers = {},
   signal?: AbortSignal,
+  assetType: "equity" | "crypto" = "equity",
 ): Promise<void> {
   const llm = requireLlm();
-  await streamNdjson("/api/debate", { code, rounds, llm }, (ev) => dispatchDebate(ev, handlers), signal);
+  await streamNdjson("/api/debate", { code, rounds, llm, asset_type: assetType }, (ev) => dispatchDebate(ev, handlers), signal);
 }
 
 export interface ReflectHandlers {

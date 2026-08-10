@@ -90,7 +90,7 @@ def _symbol_currency(symbol: str) -> str:
         return "UNKNOWN"
 
 
-def add_holding(code: str, shares: float, cost: float) -> dict:
+def add_holding(code: str, shares: float, cost: float, include_in_total: bool = False) -> dict:
     """加一笔持仓；同代码则按加权平均成本合并（加仓）。"""
     with _LOCK:
         d = _load()
@@ -100,9 +100,10 @@ def add_holding(code: str, shares: float, cost: float) -> dict:
                 # 4 位小数：ETF/基金成本常见 3-4 位（issue #13），2-3 位会让市值/盈亏对不上账
                 h["cost"] = round((h["shares"] * h["cost"] + shares * cost) / total, 4) if total else cost
                 h["shares"] = total
+                h.setdefault("include_in_total", include_in_total)
                 break
         else:
-            d["holdings"].append({"code": code, "shares": shares, "cost": cost})
+            d["holdings"].append({"code": code, "shares": shares, "cost": cost, "include_in_total": include_in_total})
         _save(d)
     return get_portfolio()
 
@@ -111,6 +112,21 @@ def remove_holding(code: str) -> dict:
     with _LOCK:
         d = _load()
         d["holdings"] = [h for h in d["holdings"] if h["code"] != code]
+        _save(d)
+    return get_portfolio()
+
+
+def set_holding_in_total(code: str, include_in_total: bool) -> dict:
+    with _LOCK:
+        d = _load()
+        found = False
+        for holding in d.get("holdings", []):
+            if holding.get("code") == code:
+                holding["include_in_total"] = bool(include_in_total)
+                found = True
+                break
+        if not found:
+            raise KeyError(code)
         _save(d)
     return get_portfolio()
 
@@ -166,6 +182,7 @@ def get_portfolio() -> dict:
                 "code": h["code"], "name": q.get("name", h["code"]),
                 "currency": currency,
                 "price": price, "shares": h["shares"], "cost": h["cost"],
+                "include_in_total": bool(h.get("include_in_total", False)),
                 "market_value": round(mv, 2) if mv is not None else None,
                 "pnl": round(pnl, 2) if pnl is not None else None,
                 "pnl_pct": round(pnl / cv * 100, 2) if pnl is not None and cv else None,

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { loadLlm, saveLlm, clearLlm } from "@/lib/llm";
 import { api, loadAccessKey, saveAccessKey, type DataSourceStatus } from "@/lib/api";
 import { subscriptionModels, apiModels, PROVIDER_BASE, isCliProvider, aiModels, type ProviderId } from "@/lib/ai-models";
+import { storageGet, storageSet } from "@/lib/storage";
 
 export function Settings() {
   const existing = loadLlm();
@@ -23,6 +24,7 @@ export function Settings() {
   // 后端访问密钥（对应部署时的 VR_API_KEY）；本机自用不设鉴权时留空
   const [accessKey, setAccessKey] = useState(loadAccessKey());
   const [dataSources, setDataSources] = useState<DataSourceStatus | null>(null);
+  const [reportingCurrency, setReportingCurrency] = useState(() => storageGet("vr-reporting-currency") || "AUTO");
 
   useEffect(() => { api.dataSourceStatus().then(setDataSources).catch(() => setDataSources(null)); }, []);
 
@@ -184,6 +186,12 @@ export function Settings() {
             </div>
           </div>
         )}
+      </GlassCard>
+
+      <GlassCard className="mt-4">
+        <h3 className="mb-1 text-sm font-semibold">组合报告币种</h3>
+        <p className="mb-3 text-xs text-muted-foreground">自动模式优先使用单一 IBKR 报告币种，否则使用 USD。此设置只保存在本地浏览器。</p>
+        <select value={reportingCurrency} onChange={(event) => { setReportingCurrency(event.target.value); storageSet("vr-reporting-currency", event.target.value); toast.success("组合报告币种已保存"); }} className="rounded-lg border border-border bg-background px-3 py-2 text-sm"><option value="AUTO">自动</option><option value="USD">USD</option><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="CNY">CNY</option></select>
       </GlassCard>
 
       <GlassCard className="mt-4">

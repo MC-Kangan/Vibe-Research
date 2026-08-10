@@ -45,6 +45,7 @@ const factValue = (value: number | null, unit: string) => {
 
 export function MarketStockView({ snapshot, history, news, earnings, filings, secFacts, sourceGaps }: Props) {
   const { instrument, quote } = snapshot;
+  const crypto = instrument.asset_type === "crypto";
   const fields = [
     { label: "现价", value: formatMarketPrice(quote.price, quote.currency), cls: pctColor(quote.change_pct) },
     { label: "涨跌幅", value: pct(quote.change_pct), cls: pctColor(quote.change_pct) },
@@ -63,7 +64,7 @@ export function MarketStockView({ snapshot, history, news, earnings, filings, se
           <h2 className="text-xl font-bold">{instrument.name}</h2>
           <span className="font-mono text-sm text-muted-foreground">{instrument.provider_symbol}</span>
           <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">{instrument.mic}</span>
-          <span className="ml-auto text-xs text-muted-foreground">{instrument.exchange} · {instrument.country}</span>
+          <span className="ml-auto text-xs text-muted-foreground">{instrument.exchange}{instrument.country ? ` · ${instrument.country}` : ""}</span>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {fields.map((field) => (
@@ -164,7 +165,7 @@ export function MarketStockView({ snapshot, history, news, earnings, filings, se
       )}
 
       <p className="text-xs text-muted-foreground/60">
-        行情来自 Yahoo chart；SEC 数据仅适用于美国申报公司；新闻与 earnings 使用 Finnhub trial，欧洲覆盖仍在验证。
+        {crypto ? "行情来自 Coinbase USD 现货市场，日线以 UTC 为边界；传统公司基本面、监管文件与 earnings 不适用。" : "行情来自 Yahoo chart；SEC 数据仅适用于美国申报公司；新闻与 earnings 使用 Finnhub trial，欧洲覆盖仍在验证。"}
         {sourceGaps.length > 0 && <> 本次缺口：{sourceGaps.join("；")}。</>}
       </p>
     </>

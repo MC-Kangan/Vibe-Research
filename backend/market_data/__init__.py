@@ -14,6 +14,8 @@ from .overview import get_market_overview
 from .mood import get_market_mood
 from .sec import get_company_facts, get_filings
 from .service import get_bars, get_snapshot, resolve_symbol
+from .crypto import resolve_crypto_symbol
+from .crypto_overview import get_crypto_overview, get_crypto_asset_context
 
 __all__ = [
     "InstrumentNotFoundError",
@@ -32,4 +34,7 @@ __all__ = [
     "get_market_mood",
     "get_snapshot",
     "resolve_symbol",
+    "resolve_crypto_symbol",
+    "get_crypto_overview",
+    "get_crypto_asset_context",
 ]

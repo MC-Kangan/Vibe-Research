@@ -60,6 +60,9 @@ class InstrumentIdentity:
     country: str
     currency: str
     timezone: str | None
+    base_asset: str | None = None
+    quote_asset: str | None = None
+    capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,7 @@ class NormalizedQuote:
     fetched_at: str
     delay_seconds: int | None
     source: str
+    is_stale: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +99,7 @@ class HistoricalBar:
     low: float | None
     close: float | None
     adjusted_close: float | None
-    volume: int | None
+    volume: float | int | None
     currency: str
 
 

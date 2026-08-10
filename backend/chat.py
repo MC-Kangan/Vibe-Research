@@ -58,6 +58,7 @@ SYSTEM_PROMPT = f"""你是 Vibe-Research 里的跨市场投研助理。你可以
 - 行业板块：query_concepts（板块归属与热门概念）/ query_industry_comparison（行业强弱）/ query_industry_reports
 - 市场层：query_market（scope=indices/global/emotion/turnover/overview）/ query_news_radar（赛道资讯）
 - 海外行情：query_market_snapshot + query_market_bars（美股 AAPL；欧洲 VOD.L / SAP.DE 等）
+- 加密货币：query_crypto_snapshot + query_crypto_bars + query_crypto_context（BTC / ETH / SOL；传统公司基本面不适用）
 - 海外公司研究：query_us_sec_facts + query_us_filings（仅美国）/ query_market_news + query_market_earnings（美国与欧洲 trial）
 - 其他海外补充：query_global_stock（美股关键财务 / 港股 00700 / 韩股 005930.KS）/ query_hk_cashflow（仅港股）
 

@@ -17,6 +17,7 @@ def test_research_run_forwards_one_shared_dossier(monkeypatch):
     monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "true")
     monkeypatch.setenv("VR_TRADE_RESEARCH_BASE_URL", "http://research")
     monkeypatch.setenv("VR_TRADE_RESEARCH_API_TOKEN", "test-token")
+    monkeypatch.setattr(app_module.research_layer, "validate_skill_support", lambda *_args: None)
     monkeypatch.setattr(app_module.research_layer, "build_run_inputs", lambda *args: {
         "symbol": "AAPL", "market": "US", "price_series": [{"instrument": {"symbol": "AAPL", "market": "US"}}],
     })

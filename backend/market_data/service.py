@@ -45,6 +45,11 @@ def resolve_symbol(symbol: str) -> ResolvedSymbol:
 def _identity_for(resolved: ResolvedSymbol, snapshot: InstrumentSnapshot) -> InstrumentIdentity:
     """Use snapshot metadata while keeping exchange identity owned by our allowlist."""
     item = snapshot.instrument
+    capabilities = ["quote", "history", "technical", "markov", "debate"]
+    if resolved.exchange.country == "US":
+        capabilities.extend(["fundamentals", "filings", "earnings", "news"])
+    else:
+        capabilities.extend(["earnings", "news"])
     return InstrumentIdentity(
         instrument_id=f"equity:{resolved.exchange.mic}:{resolved.local_symbol}",
         asset_type="equity",
@@ -56,6 +61,9 @@ def _identity_for(resolved: ResolvedSymbol, snapshot: InstrumentSnapshot) -> Ins
         country=resolved.exchange.country,
         currency=item.currency,
         timezone=item.timezone,
+        base_asset=resolved.local_symbol,
+        quote_asset=item.currency,
+        capabilities=tuple(capabilities),
     )
 
 
@@ -88,9 +96,19 @@ class MarketDataService:
 service = MarketDataService()
 
 
-def get_snapshot(symbol: str) -> InstrumentSnapshot:
+def get_snapshot(symbol: str, asset_type: str = "equity") -> InstrumentSnapshot:
+    if asset_type == "crypto":
+        from .crypto import service as crypto_service
+        return crypto_service.snapshot(symbol)
+    if asset_type != "equity":
+        raise UnsupportedSymbolError("asset_type 仅支持 equity 或 crypto")
     return service.snapshot(symbol)
 
 
-def get_bars(symbol: str, range_: str = "1y", interval: str = "1d") -> HistoricalSeries:
+def get_bars(symbol: str, range_: str = "1y", interval: str = "1d", asset_type: str = "equity") -> HistoricalSeries:
+    if asset_type == "crypto":
+        from .crypto import service as crypto_service
+        return crypto_service.bars(symbol, range_, interval)
+    if asset_type != "equity":
+        raise UnsupportedSymbolError("asset_type 仅支持 equity 或 crypto")
     return service.bars(symbol, range_, interval)

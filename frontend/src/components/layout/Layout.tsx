@@ -10,12 +10,12 @@ import { useDarkMode } from "@/hooks/useDarkMode";
 import { storageGet, storageSet } from "@/lib/storage";
 import { AUTH_LOGOUT_EVENT } from "@/components/auth/AuthGate";
 
-const APP_VERSION = "v0.2.2";
+const APP_VERSION = "v0.3.0";
 
 const NAV = [
   { to: "/daily-review", icon: Activity, label: "每日复盘" },
   { to: "/watchlist", icon: Star, label: "自选股" },
-  { to: "/stock-data", icon: Search, label: "个股数据" },
+  { to: "/stock-data", icon: Search, label: "标的数据" },
   { to: "/intel", icon: Radar, label: "资讯雷达" },
   { to: "/debate", icon: Swords, label: "多空辩论" },
   { to: "/portfolio", icon: Wallet, label: "我的持仓" },
@@ -51,7 +51,7 @@ export function Layout() {
               </span>
             )}
           </Link>
-          {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">个人 AI 投研系统 · 美股/欧洲/A股</p>}
+          {!collapsed && <p className="mt-1 text-[11px] text-muted-foreground">个人 AI 投研系统 · 股票/加密货币</p>}
         </div>
 
         {/* Nav */}

@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type BenchmarkData, type IntelligenceFeed, type MarketOverviewData, type MarketMoodData } from "@/lib/api";
+import { api, ApiError, type IndexQuote, type Quote, type MarketOverview, type ShortTermEmotion, type TurnoverTop, type BenchmarkData, type IntelligenceFeed, type MarketOverviewData, type MarketMoodData, type CryptoOverview } from "@/lib/api";
 import { hasLlm, chatStream } from "@/lib/llm";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
@@ -17,8 +17,8 @@ const pctColor = (p: number | null | undefined) => p != null && p > 0 ? "text-su
 const fmt = (v: number) => v.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
 const pctText = (v: number | null | undefined) => v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
 const yi = (v: number | null) => (v == null ? "—" : `${fmt(v / 1e8)} 亿`); // 元 → 亿
-type MarketFocus = "US" | "Europe" | "CN";
-const marketLabels: Record<MarketFocus, string> = { US: "美国", Europe: "欧洲", CN: "A股" };
+type MarketFocus = "US" | "Europe" | "CN" | "Crypto";
+const marketLabels: Record<MarketFocus, string> = { US: "美国", Europe: "欧洲", CN: "A股", Crypto: "加密" };
 
 export function DailyReview() {
   const [indices, setIndices] = useState<IndexQuote[]>([]);
@@ -27,6 +27,8 @@ export function DailyReview() {
   const [internationalOverview, setInternationalOverview] = useState<MarketOverviewData | null>(null);
   const [marketFocus, setMarketFocus] = useState<MarketFocus>("US");
   const [marketMood, setMarketMood] = useState<MarketMoodData | null>(null);
+  const [cryptoOverview, setCryptoOverview] = useState<CryptoOverview | null>(null);
+  const [cryptoDone, setCryptoDone] = useState(false);
   const [moodDone, setMoodDone] = useState(false);
   const [review, setReview] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -60,6 +62,11 @@ export function DailyReview() {
     api.marketMood(market).then(setMarketMood).catch(() => setMarketMood(null)).finally(() => setMoodDone(true));
   };
 
+  const loadCrypto = () => {
+    setCryptoDone(false);
+    api.cryptoOverview().then(setCryptoOverview).catch(() => setCryptoOverview(null)).finally(() => setCryptoDone(true));
+  };
+
   const loadAShareTools = () => {
     setIdxErr(false); setOvDone(false); setEmoDone(false); setToDone(false);
     api.indices().then(setIndices).catch(() => setIdxErr(true));
@@ -70,6 +77,7 @@ export function DailyReview() {
 
   const refreshSelectedMarket = () => {
     if (marketFocus === "CN") loadAShareTools();
+    else if (marketFocus === "Crypto") loadCrypto();
     else { loadInternational(watchCodes); loadMarketMood(marketFocus); }
   };
 
@@ -102,6 +110,7 @@ export function DailyReview() {
     const codes = loadWatch();
     loadInternational(codes);
     loadMarketMood("US");
+    loadCrypto();
     refreshWatch(codes);
     refreshIntelligence(codes);
   }, []);
@@ -109,6 +118,7 @@ export function DailyReview() {
   const selectMarket = (next: MarketFocus) => {
     setMarketFocus(next);
     if (next === "CN") loadAShareTools();
+    else if (next === "Crypto") loadCrypto();
     else loadMarketMood(next);
   };
 
@@ -147,7 +157,10 @@ export function DailyReview() {
     ? `${marketMood.universe.label}：情绪${marketMood.mood}，上涨 ${marketMood.breadth.up}，下跌 ${marketMood.breadth.down}，` +
       `站上50日均线 ${marketMood.participation["50"].pct ?? "—"}%，52周新高 ${marketMood.new_highs}，新低 ${marketMood.new_lows}。`
     : "（所选市场情绪数据未取到）";
-  const selectedBenchmarks = benchmarks?.items.filter((item) => item.region === marketFocus);
+  const cryptoSummary = cryptoOverview
+    ? `总市值 ${cryptoOverview.global.total_market_cap_usd ?? "—"} USD；24小时变化 ${cryptoOverview.global.market_cap_change_24h_pct ?? "—"}%；BTC 主导率 ${cryptoOverview.global.btc_dominance_pct ?? "—"}%；大盘币上涨/下跌 ${cryptoOverview.breadth.up}/${cryptoOverview.breadth.down}。\n` + cryptoOverview.assets.slice(0, 10).map((item) => `${item.symbol} ${item.price ?? "—"} USD（24h ${item.change_24h_pct ?? "—"}%）`).join("；")
+    : "（加密市场数据未取到）";
+  const selectedBenchmarks = marketFocus === "US" || marketFocus === "Europe" ? benchmarks?.items.filter((item) => item.region === marketFocus) : [];
 
   const runReview = async () => {
     setReviewErr(null);
@@ -168,7 +181,8 @@ export function DailyReview() {
       `以下是用户关注的跨市场股票行情：\n${watchSummary}\n\n` +
       `以下是关注股票的近期文件、新闻与 earnings：\n${intelligenceSummary}\n\n` +
       `以下是 A 股数据（次要参考）：\n${aShareSummary}\n\n` +
-      "请用中文做一段跨市场当天复盘：先总结美国与欧洲市场，再总结关注股票事件，最后简要补充 A 股。" +
+      `以下是加密市场数据（24小时指标与 UTC 日线需区分）：\n${cryptoSummary}\n\n` +
+      "请用中文做一段跨市场当天复盘：总结美国、欧洲与加密市场，再总结关注股票事件，最后简要补充 A 股。" +
       "只做客观陈述与多视角分析，不预测涨跌、不推荐任何标的、不构成投资建议。";
     try {
       await chatStream([{ role: "user", content: prompt }], `今日跨市场数据：${benchmarkSummary}`, {
@@ -198,10 +212,10 @@ export function DailyReview() {
     <div>
       <PageHeader
         title="每日复盘"
-        subtitle={`${today} · 美国 / 欧洲基准、自选股事件与 AI 复盘一屏看全`}
+        subtitle={`${today} · 美国 / 欧洲 / A股 / 加密市场与 AI 复盘一屏看全`}
         actions={
           <AskAiButton
-            context={`今日跨市场基准：${benchmarkSummary}\n所选市场情绪：${moodSummary}\n跨市场概览：\n${marketOverviewSummary}\n关注股票事件：\n${intelligenceSummary}`}
+            context={`今日跨市场基准：${benchmarkSummary}\n所选市场情绪：${moodSummary}\n加密市场：${cryptoSummary}\n跨市场概览：\n${marketOverviewSummary}\n关注股票事件：\n${intelligenceSummary}`}
             label="问 AI"
             suggestions={["今天大盘怎么走", "哪些指数领涨领跌", "盘面有什么值得注意"]}
           />
@@ -223,6 +237,7 @@ export function DailyReview() {
             <option value="US">美国</option>
             <option value="Europe">欧洲</option>
             <option value="CN">A股</option>
+            <option value="Crypto">加密市场</option>
           </select>
           <button onClick={refreshSelectedMarket} className="text-muted-foreground hover:text-primary" title="刷新所选市场">
             <RefreshCw className="h-4 w-4" />
@@ -232,13 +247,20 @@ export function DailyReview() {
 
       {/* 1. Selected-market headline benchmarks */}
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-muted-foreground">{marketFocus === "CN" ? "A股指数" : "主要基准"}</h3>
+        <h3 className="text-sm font-semibold text-muted-foreground">{marketFocus === "CN" ? "A股指数" : marketFocus === "Crypto" ? "加密市场概览" : "主要基准"}</h3>
       </div>
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
         {marketFocus === "CN" ? (
           indices.length === 0
             ? [1, 2, 3, 4].map((i) => <GlassCard key={i} className="p-3"><p className="text-xs text-muted-foreground">{idxErr ? "行情未接通" : "加载中…"}</p><p className="mt-1 font-mono text-lg font-bold text-muted-foreground/40">—</p></GlassCard>)
             : indices.map((item) => <GlassCard key={item.name} className="p-3"><p className="truncate text-xs text-muted-foreground">{item.name}</p><p className={cn("mt-1 font-mono text-lg font-bold", pctColor(item.change_pct))}>{fmt(item.price)}</p><p className={cn("text-xs", pctColor(item.change_pct))}>{pctText(item.change_pct)}</p></GlassCard>)
+        ) : marketFocus === "Crypto" ? (
+          !cryptoOverview ? <GlassCard className="col-span-full p-3"><p className="text-sm text-muted-foreground">{cryptoDone ? "加密市场数据暂不可用" : "加载中…"}</p></GlassCard> : [
+            ["总市值", cryptoOverview.global.total_market_cap_usd == null ? "—" : `$${(cryptoOverview.global.total_market_cap_usd / 1e12).toFixed(2)}T`],
+            ["24h 成交量", cryptoOverview.global.total_volume_24h_usd == null ? "—" : `$${(cryptoOverview.global.total_volume_24h_usd / 1e9).toFixed(1)}B`],
+            ["BTC 主导率", cryptoOverview.global.btc_dominance_pct == null ? "—" : `${cryptoOverview.global.btc_dominance_pct.toFixed(1)}%`],
+            ["ETH 主导率", cryptoOverview.global.eth_dominance_pct == null ? "—" : `${cryptoOverview.global.eth_dominance_pct.toFixed(1)}%`],
+          ].map(([label, value]) => <GlassCard key={label} className="p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-mono text-lg font-bold">{value}</p></GlassCard>)
         ) : !benchmarks ? (
           Array.from({ length: marketFocus === "US" ? 2 : 4 }, (_, index) => index).map((i) => (
               <GlassCard key={i} className="p-3">
@@ -257,7 +279,13 @@ export function DailyReview() {
         )}
       </div>
 
-      {marketFocus !== "CN" && (
+      {marketFocus === "Crypto" && cryptoOverview && <GlassCard className="mb-6">
+        <div className="mb-3 flex items-center justify-between"><h4 className="text-sm font-semibold">BTC + 大市值 Altcoins</h4><span className="text-[10px] text-muted-foreground">24h · CoinGecko 排名 / Coinbase 价格</span></div>
+        <div className="grid gap-x-5 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">{cryptoOverview.assets.map((item) => <div key={item.id || item.symbol} className="flex items-center gap-2 border-b border-border/30 pb-1.5 text-xs"><span className="w-7 text-muted-foreground">#{item.rank ?? "—"}</span><span className="w-14 font-mono font-semibold">{item.symbol}</span><span className="flex-1 text-right font-mono">{item.price == null ? "—" : `$${item.price.toLocaleString()}`}</span><span className={cn("w-16 text-right font-mono", pctColor(item.change_24h_pct))}>{pctText(item.change_24h_pct)}</span></div>)}</div>
+        <p className="mt-3 text-[10px] text-muted-foreground">宽度：上涨 {cryptoOverview.breadth.up} / 下跌 {cryptoOverview.breadth.down} / 平盘 {cryptoOverview.breadth.flat}。{cryptoOverview.gaps.length ? ` 数据缺口：${cryptoOverview.gaps.join("；")}` : ""}</p>
+      </GlassCard>}
+
+      {(marketFocus === "US" || marketFocus === "Europe") && (
         <>
           <div className="mb-3 flex items-center gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground"><Gauge className="h-4 w-4" />市场情绪</h3>

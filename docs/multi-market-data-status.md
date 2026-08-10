@@ -1,5 +1,13 @@
 # Multi-market stock support
 
+## Crypto support
+
+- Inputs use an explicit crypto asset mode and accept `BTC`, `ETH`, `SOL`, or canonical Coinbase products such as `BTC-USD`.
+- Coinbase public USD spot products provide normalized quotes and UTC daily OHLCV. CoinGecko optionally supplies global market cap, volume, dominance, rankings, supply and ATH context.
+- The daily review tracks BTC plus 20 dynamically ranked non-stablecoin altcoins. Assets without Coinbase USD pairs remain visible as coverage gaps.
+- Crypto supports shared price charts, technical/Markov skills and bull/bear debate. Traditional company fundamentals, filings and earnings are marked not applicable; on-chain flows and token unlocks remain explicit gaps.
+- Coinbase balances use a backend-only View key. Manual wallet rows and CSV imports are stored locally; P&L is shown only when cost basis is supplied.
+
 ## Supported inputs
 
 - A-shares: six-digit codes such as `600519`.

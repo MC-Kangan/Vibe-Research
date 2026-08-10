@@ -7,7 +7,7 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { debateStream, type DebateStage } from "@/lib/agents";
 import { addNote } from "@/lib/notes";
 import { ApiError } from "@/lib/api";
-import { normalizeStockSymbol } from "@/lib/market-symbols";
+import { normalizeCryptoSymbol, normalizeStockSymbol } from "@/lib/market-symbols";
 
 interface StageBox {
   stage: DebateStage;
@@ -29,6 +29,7 @@ const STAGE_TONE: Record<DebateStage, string> = {
 const DOSSIER_HINT = "多空双方拿到的是同一份接口实时拉取的数据，谁也不能靠编数字赢。";
 
 export function Debate() {
+  const [assetType, setAssetType] = useState<"equity" | "crypto">("equity");
   const [code, setCode] = useState("");
   const [rounds, setRounds] = useState(1);
   const [running, setRunning] = useState(false);
@@ -45,8 +46,8 @@ export function Debate() {
   };
 
   async function start() {
-    const c = normalizeStockSymbol(code);
-    if (!c) { setError("请输入 A 股、美股或带交易所后缀的欧洲股票代码"); return; }
+    const c = assetType === "crypto" ? normalizeCryptoSymbol(code) : normalizeStockSymbol(code);
+    if (!c) { setError(assetType === "crypto" ? "请输入 BTC、ETH、SOL 等加密货币代码" : "请输入 A 股、美股或带交易所后缀的欧洲股票代码"); return; }
     setCode(c);
     reset();
     setRunning(true);
@@ -67,7 +68,7 @@ export function Debate() {
         onStageDone: (stage, _label, content) =>
           setStages((s) => s.map((b) => (b.stage === stage && !b.done ? { ...b, content, done: true } : b))),
         onError: (message, stage) => setError(stage ? `${stage}：${message}` : message),
-      }, ctrl.signal);
+      }, ctrl.signal, assetType);
       setStatus("辩论完成");
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") setStatus("已中止");
@@ -100,13 +101,14 @@ export function Debate() {
 
       <GlassCard>
         <div className="flex flex-wrap items-end gap-3">
+          <div><label className="mb-1 block text-xs text-muted-foreground">资产类型</label><select value={assetType} onChange={(event) => { setAssetType(event.target.value as "equity" | "crypto"); setCode(""); reset(); }} disabled={running} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm"><option value="equity">股票</option><option value="crypto">加密货币</option></select></div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">股票代码</label>
+            <label className="mb-1 block text-xs text-muted-foreground">{assetType === "crypto" ? "加密货币代码" : "股票代码"}</label>
             <input
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))}
               onKeyDown={(e) => { if (e.key === "Enter" && !running) start(); }}
-              placeholder="600519 / AAPL / VOD.L"
+              placeholder={assetType === "crypto" ? "BTC / ETH / SOL" : "600519 / AAPL / VOD.L"}
               disabled={running}
               className="w-56 rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-sm outline-none focus:border-primary/60"
             />

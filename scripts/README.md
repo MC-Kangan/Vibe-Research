@@ -14,6 +14,11 @@ from a shared `.env` are not used by the local launcher.
 Open `http://127.0.0.1:5899/portfolio` for IBKR positions, P&L analytics, and
 position deep dives, or `http://127.0.0.1:5899/stock-data` for Skills Analysis.
 
+For crypto, run `python scripts/test_crypto_sources.py --symbol BTC` to inspect
+Coinbase public prices/candles, CoinGecko overview availability, and the last
+local Coinbase balance snapshot. Add `--refresh-coinbase` only when a backend
+View key is configured and you want to refresh that normalized snapshot.
+
 Logs are kept in the printed `RUN_DIR`. Press Ctrl-C in the
 launcher terminal to stop all child services.
 

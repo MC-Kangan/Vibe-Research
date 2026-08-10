@@ -15,12 +15,20 @@ import tools as data_tools
 from market_data.yahoo import YahooProvider
 
 ALLOWED_SKILLS = {"worth-buy-stocks", "markov-method"}
+DEFAULT_SKILL_ASSET_TYPES = {
+    "worth-buy-stocks": ("equity",),
+    "markov-method": ("equity", "crypto"),
+}
 _A_SHARE_BENCHMARKS = {"CSI300": ("000300", "SSE"), "CSI500": ("000905", "SSE")}
 _EU_INDEXES = {"SXXP": ("^STOXX", "INDEX"), "SX5E": ("^STOXX50E", "INDEX")}
 
 
 class ResearchClientError(RuntimeError):
     """Safe error raised for TradeAgent configuration or transport failures."""
+
+
+class UnsupportedSkillAssetError(ResearchClientError):
+    """Selected skills cannot operate on the requested asset type."""
 
 
 def configured() -> bool:
@@ -61,7 +69,32 @@ def list_skills() -> list[dict[str, Any]]:
     payload = response.json()
     if not isinstance(payload, list):
         raise ResearchClientError("TradeAgent returned an invalid skills payload")
-    return [item for item in payload if isinstance(item, dict) and item.get("name") in ALLOWED_SKILLS]
+    result = []
+    for item in payload:
+        if isinstance(item, dict) and item.get("name") in ALLOWED_SKILLS:
+            name = str(item["name"])
+            declared = item.get("supported_asset_types")
+            supported = (
+                [value for value in declared if value in {"equity", "crypto"}]
+                if isinstance(declared, list)
+                else list(DEFAULT_SKILL_ASSET_TYPES[name])
+            )
+            result.append({**item, "supported_asset_types": supported})
+    return result
+
+
+def validate_skill_support(skills: list[str], asset_type: str, catalog: list[dict[str, Any]] | None = None) -> None:
+    if asset_type not in {"equity", "crypto"}:
+        raise UnsupportedSkillAssetError("asset_type must be equity or crypto")
+    available = catalog if catalog is not None else list_skills()
+    support_by_name = {
+        str(item.get("name")): item.get("supported_asset_types", [])
+        for item in available
+        if isinstance(item, dict)
+    }
+    unsupported = [skill for skill in skills if asset_type not in support_by_name.get(skill, [])]
+    if unsupported:
+        raise UnsupportedSkillAssetError(f"Skills do not support {asset_type}: {', '.join(unsupported)}")
 
 
 def run_skill(
@@ -71,11 +104,12 @@ def run_skill(
     market: str,
     skill_parameters: dict[str, dict[str, Any]],
     price_series: list[dict[str, Any]],
+    asset_type: str = "equity",
 ) -> dict[str, Any]:
     if skill not in ALLOWED_SKILLS:
         raise ResearchClientError("Selected skill is not enabled")
     request = {
-        "instrument": {"symbol": symbol, "market": market},
+        "instrument": {"symbol": symbol, "market": market, "asset_type": asset_type},
         "analysts": [skill],
         "skill_parameters": skill_parameters,
         "price_series": price_series,
@@ -105,10 +139,15 @@ def run_skill(
     return payload
 
 
-def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[str, Any]], asset_type: str = "equity") -> dict[str, Any]:
     """Resolve one target and all default skill benchmarks into one shared payload."""
     canonical = (symbol or "").strip().upper()
-    if canonical.isdigit() and len(canonical) == 6:
+    if asset_type == "crypto":
+        target_symbol = market_data.resolve_crypto_symbol(canonical)
+        market = "CRYPTO"
+    elif asset_type != "equity":
+        raise ResearchClientError("asset_type must be equity or crypto")
+    elif canonical.isdigit() and len(canonical) == 6:
         market = _a_share_market(canonical)
         target_symbol = canonical
     else:
@@ -121,8 +160,10 @@ def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[
         requested = str(parameters.get("worth-buy-stocks", {}).get("benchmark_symbols", "AUTO"))
         labels = [item.strip().upper() for item in requested.split(",") if item.strip()]
         if not labels or labels == ["AUTO"]:
-            labels = ["CSI300", "CSI500"] if market in {"SSE", "SZSE", "BJSE"} else (
-                ["SXXP", "SX5E"] if market == "EU" else ["SPY", "QQQ"]
+            labels = ["BTC-USD", "ETH-USD"] if market == "CRYPTO" else (
+                ["CSI300", "CSI500"] if market in {"SSE", "SZSE", "BJSE"} else (
+                    ["SXXP", "SX5E"] if market == "EU" else ["SPY", "QQQ"]
+                )
             )
         for label in labels[:8]:
             required[f"benchmark:{label}"] = _benchmark_identity(label, market)
@@ -150,6 +191,7 @@ def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[
     return {
         "symbol": target_symbol,
         "market": market,
+        "asset_type": asset_type,
         "price_series": list(series.values()),
     }
 
@@ -161,6 +203,8 @@ def _benchmark_identity(label: str, target_market: str) -> tuple[str, str]:
         return _EU_INDEXES[label]
     if label.isdigit() and len(label) == 6:
         return label, _a_share_market(label)
+    if target_market == "CRYPTO":
+        return market_data.resolve_crypto_symbol(label), "CRYPTO"
     if target_market == "EU" and "." in label:
         return label, "EU"
     return label, "US"
@@ -173,9 +217,9 @@ def _load_series(symbol: str, market: str) -> dict[str, Any]:
         rows = _yahoo_index_history(symbol)
         source = "yahoo"
     else:
-        data = market_data.get_bars(symbol, "2y", "1d")
+        data = market_data.get_bars(symbol, "2y", "1d", "crypto" if market == "CRYPTO" else "equity")
         rows = data.bars
-        source = "yahoo"
+        source = data.source
     bars = []
     for row in rows:
         date_value = row.get("date") if isinstance(row, dict) else row.date
@@ -194,7 +238,7 @@ def _load_series(symbol: str, market: str) -> dict[str, Any]:
         })
     if not bars:
         raise ResearchClientError("No usable daily bars returned")
-    return {"instrument": {"symbol": symbol, "market": market}, "source": source, "bars": bars[-520:]}
+    return {"instrument": {"symbol": symbol, "market": market, "asset_type": "crypto" if market == "CRYPTO" else "equity"}, "source": source, "bars": bars[-520:]}
 
 
 def _a_share_history(symbol: str, market: str) -> tuple[list[dict[str, Any]], str]:

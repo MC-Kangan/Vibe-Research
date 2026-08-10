@@ -13,16 +13,28 @@ This is the living registry for VibeResearch market-data providers. Update the s
 
 ## Current Coverage
 
-| Information | A-share | US stocks | European stocks |
-|---|---|---|---|
-| Quote and price history | Active: Tencent, Eastmoney, mootdx fallbacks | Active: Yahoo chart | Active: Yahoo chart |
-| Fundamentals | Active: Eastmoney and existing A-share feeds | Active: Eastmoney US F10; Active: SEC selected XBRL facts | Gap; Finnhub/FMP/EODHD coverage to be tested |
-| Company news | Active: Eastmoney/Baidu-backed application feeds | Trial: Finnhub company news | Trial: Finnhub company news; exchange-by-exchange coverage unverified |
-| Earnings actual vs estimate | Active through existing valuation/financial feeds where available | Trial: Finnhub stock earnings | Trial: Finnhub stock earnings; symbol and plan coverage unverified |
-| Regulatory filings | Active: Eastmoney announcements | Active: SEC EDGAR submissions and filing links | Gap; filings.xbrl.org is the preferred first candidate |
-| Analyst estimates | Active: existing Eastmoney consensus fields and reports | Partial: current Eastmoney US F10 metrics; long-range consensus remains a gap | Gap; evaluate Finnhub or FMP trial coverage |
-| Debate dossier | Active | Yahoo + Eastmoney US F10 + SEC + optional Finnhub | Yahoo + optional Finnhub; fundamentals and filings remain explicit gaps |
-| Market overview | Active: existing A-share breadth and sector flows | Active: headline benchmarks, watchlist breadth/movers, Yahoo sector ETF proxies | Active: headline benchmarks, watchlist breadth/movers, Yahoo sector ETF proxies |
+| Information | A-share | US stocks | European stocks | Crypto |
+|---|---|---|---|---|
+| Quote and price history | Active: Tencent, Eastmoney, mootdx fallbacks | Active: Yahoo chart | Active: Yahoo chart | Active: Coinbase USD spot |
+| Fundamentals | Active: Eastmoney and existing A-share feeds | Active: Eastmoney US F10; Active: SEC selected XBRL facts | Gap; Finnhub/FMP/EODHD coverage to be tested | Gap; unsupported in v1 |
+| Company news | Active: Eastmoney/Baidu-backed application feeds | Trial: Finnhub company news | Trial: Finnhub company news; exchange-by-exchange coverage unverified | Gap; unsupported in v1 |
+| Earnings actual vs estimate | Active through existing valuation/financial feeds where available | Trial: Finnhub stock earnings | Trial: Finnhub stock earnings; symbol and plan coverage unverified | Gap; unsupported in v1 |
+| Regulatory filings | Active: Eastmoney announcements | Active: SEC EDGAR submissions and filing links | Gap; filings.xbrl.org is the preferred first candidate | Gap; unsupported in v1 |
+| Analyst estimates | Active: existing Eastmoney consensus fields and reports | Partial: current Eastmoney US F10 metrics; long-range consensus remains a gap | Gap; evaluate Finnhub or FMP trial coverage | Gap; unsupported in v1 |
+| Debate dossier | Active | Yahoo + Eastmoney US F10 + SEC + optional Finnhub | Yahoo + optional Finnhub; fundamentals and filings remain explicit gaps | Coinbase price history + CoinGecko market context; unsupported capabilities remain explicit gaps |
+| Market overview | Active: existing A-share breadth and sector flows | Active: headline benchmarks, watchlist breadth/movers, Yahoo sector ETF proxies | Active: headline benchmarks, watchlist breadth/movers, Yahoo sector ETF proxies | Trial: CoinGecko global metrics and dynamic large caps |
+
+### Coinbase Advanced Trade
+
+- Status: **Active** for public USD spot quotes and UTC daily OHLCV; optional read-only account balances.
+- Authentication: public market endpoints need no key. Account import uses backend-only `VR_COINBASE_API_KEY_NAME` and `VR_COINBASE_API_PRIVATE_KEY` with View permission only.
+- Notes: account snapshots contain normalized balances only. V1 does not reconstruct tax lots or cost basis from fills.
+
+### CoinGecko
+
+- Status: **Trial** for global crypto market cap, volume, dominance, rankings, supply and ATH metadata.
+- Authentication: optional Demo or Pro key in `VR_COINGECKO_API_KEY`; select the host with `VR_COINGECKO_API_TIER`.
+- Failure behavior: Coinbase prices and candles continue working; market-wide modules use valid cache or show an explicit gap.
 
 ## Connected Providers
 
@@ -137,3 +149,4 @@ cd backend && .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8900
 - **2026-08-04**: Created registry. Connected SEC EDGAR filings/companyfacts and optional Finnhub trial news/earnings. Retained Yahoo for US/European prices and Eastmoney US F10 for existing key metrics.
 - **2026-08-05**: Added Yahoo-backed US/European headline benchmarks, normalized cross-market watchlist intelligence, and moved A-share market tools below the primary global review.
 - **2026-08-05**: Added the first US/European market overview: benchmark snapshots, watchlist-derived breadth and movers, and Yahoo sector proxies. Full-market breadth and normalized constituent sector data remain follow-up work.
+- **2026-08-10**: Added Coinbase crypto quotes/candles and read-only balances, CoinGecko market-wide metadata, crypto research/debate routing, and cross-asset portfolio summaries.

@@ -23,6 +23,7 @@ import astock
 import auth as auth_layer
 import chat as chat_layer
 import cli_runtime
+import crypto_portfolio
 import debate as debate_layer
 import gstock
 import ibkr_analytics
@@ -37,7 +38,7 @@ import position_service
 import reflection as reflect_layer
 import research as research_layer
 
-app = FastAPI(title="Vibe-Research API", version="0.2.2")
+app = FastAPI(title="Vibe-Research API", version="0.3.0")
 
 # 每半小时后台刷新持仓数据
 pf.start_scheduler(1800)
@@ -99,7 +100,7 @@ def _validate_stock_symbol(symbol: str) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "vibe-research-api", "version": "0.2.2"}
+    return {"ok": True, "service": "vibe-research-api", "version": "0.3.0"}
 
 
 class AuthLoginReq(BaseModel):
@@ -219,6 +220,7 @@ def _ndjson(events):
 class DebateReq(BaseModel):
     code: str
     rounds: int = 1
+    asset_type: str = "equity"
     llm: LLMConfig
 
 
@@ -228,10 +230,15 @@ def debate(req: DebateReq):
 
     刻意不产出买卖结论——终点是「分歧点 + 验证清单」，判断留给用户自己。
     """
-    code = _validate_stock_symbol(req.code)
+    if req.asset_type == "crypto":
+        code = market_data.resolve_crypto_symbol(req.code).removesuffix("-USD")
+    elif req.asset_type == "equity":
+        code = _validate_stock_symbol(req.code)
+    else:
+        raise HTTPException(400, "asset_type 仅支持 equity 或 crypto")
     cfg = _check_llm(req.llm)
     rounds = 2 if req.rounds >= 2 else 1
-    return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds))
+    return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds, req.asset_type))
 
 
 class ReflectReq(BaseModel):
@@ -253,6 +260,7 @@ class HoldingIn(BaseModel):
     code: str
     shares: float
     cost: float
+    include_in_total: bool = False
 
 
 @app.get("/api/portfolio")
@@ -366,7 +374,19 @@ def portfolio_add(h: HoldingIn):
     if h.shares <= 0:
         raise HTTPException(400, "数量必须大于 0")
     # 成本价不限正负：融券 / 返息 / 摊薄后为负成本等情形按结果计算，用户想怎么输就怎么输。
-    return {"data": pf.add_holding(code, h.shares, h.cost)}
+    return {"data": pf.add_holding(code, h.shares, h.cost, h.include_in_total)}
+
+
+class HoldingTotalIn(BaseModel):
+    include_in_total: bool
+
+
+@app.put("/api/portfolio/holding/total")
+def portfolio_holding_total(request: HoldingTotalIn, code: str = Query(...)):
+    try:
+        return {"data": pf.set_holding_in_total(_validate_stock_symbol(code), request.include_in_total)}
+    except KeyError as exc:
+        raise HTTPException(404, "未找到该手工股票持仓") from exc
 
 
 @app.delete("/api/portfolio/holding")
@@ -448,6 +468,70 @@ def portfolio_refresh():
         return {"data": pf.get_portfolio()}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"刷新失败：{e}") from e
+
+
+class ManualCryptoIn(BaseModel):
+    wallet_label: str = Field(min_length=1, max_length=80)
+    asset: str = Field(min_length=2, max_length=16)
+    quantity: float = Field(ge=0)
+    unit_cost: float | None = Field(default=None, ge=0)
+    cost_currency: str = Field(default="USD", min_length=3, max_length=3)
+
+
+class CryptoCsvIn(BaseModel):
+    content: str = Field(max_length=1_000_000)
+
+
+@app.get("/api/portfolio/crypto")
+def crypto_portfolio_get(reporting_currency: str = Query("USD", min_length=3, max_length=3)):
+    return {"data": crypto_portfolio.get_crypto_portfolio(reporting_currency)}
+
+
+@app.get("/api/positions/crypto/current")
+def crypto_positions_current():
+    return {"data": crypto_portfolio.get_coinbase_snapshot()}
+
+
+@app.post("/api/positions/crypto/refresh")
+def crypto_positions_refresh():
+    try:
+        return {"data": crypto_portfolio.refresh_coinbase()}
+    except crypto_portfolio.CryptoPortfolioError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/portfolio/crypto/manual")
+def crypto_manual_upsert(request: ManualCryptoIn):
+    try:
+        return {"data": crypto_portfolio.upsert_manual(request.model_dump())}
+    except crypto_portfolio.CryptoPortfolioError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.delete("/api/portfolio/crypto/manual")
+def crypto_manual_remove(wallet_label: str = Query(...), asset: str = Query(...)):
+    return {"data": crypto_portfolio.remove_manual(wallet_label, asset)}
+
+
+@app.post("/api/portfolio/crypto/import/preview")
+def crypto_csv_preview(request: CryptoCsvIn):
+    try:
+        return {"data": {"rows": crypto_portfolio.parse_csv(request.content)}}
+    except crypto_portfolio.CryptoPortfolioError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/portfolio/crypto/import")
+def crypto_csv_commit(request: CryptoCsvIn):
+    try:
+        return {"data": crypto_portfolio.commit_csv(request.content)}
+    except crypto_portfolio.CryptoPortfolioError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/portfolio/summary")
+def portfolio_summary(reporting_currency: str | None = Query(default=None, min_length=3, max_length=3)):
+    return {"data": crypto_portfolio.combined_summary(reporting_currency)}
 
 
 @app.get("/api/radar")
@@ -535,6 +619,17 @@ def market_data_mood(market_name: str = Query("US", alias="market")):
     return {"data": market_data.get_market_mood(market_name)}
 
 
+@app.get("/api/market-data/crypto/overview")
+def market_data_crypto_overview():
+    """BTC plus large-cap altcoins with market-wide crypto context."""
+    return {"data": market_data.get_crypto_overview()}
+
+
+@app.get("/api/market-data/crypto/context")
+def market_data_crypto_context(symbol: str = Query(..., min_length=2, max_length=16)):
+    return {"data": market_data.get_crypto_asset_context(symbol)}
+
+
 @app.get("/api/data-sources/status")
 def data_sources_status():
     """Configuration status only; never returns provider credentials."""
@@ -543,6 +638,9 @@ def data_sources_status():
         "sec_edgar": {"configured": bool(os.environ.get("VR_SEC_USER_AGENT", "").strip()), "coverage": "US filings and selected XBRL facts"},
         "finnhub": {"configured": bool(os.environ.get("VR_FINNHUB_API_KEY", "").strip()), "coverage": "US/Europe company news and earnings trial"},
         "europe_filings": {"configured": False, "coverage": "European regulatory filings not yet connected"},
+        "coinbase_market": {"configured": True, "coverage": "Public USD spot quotes and daily candles"},
+        "coinbase_account": {"configured": crypto_portfolio.coinbase_configured(), "coverage": "Read-only Coinbase balances"},
+        "coingecko": {"configured": bool(os.environ.get("VR_COINGECKO_API_KEY", "").strip()), "coverage": "Crypto market rank, breadth, dominance and metadata"},
     }}
 
 
@@ -569,6 +667,7 @@ def intelligence_feed(req: IntelligenceFeedReq):
 class ResearchRunReq(BaseModel):
     symbol: str
     skills: list[str]
+    asset_type: str = "equity"
     skill_parameters: dict[str, dict] = Field(default_factory=dict)
 
 
@@ -595,7 +694,10 @@ def research_run(req: ResearchRunReq):
     if not research_layer.configured():
         raise HTTPException(503, "TradeAgent is not configured")
     try:
-        inputs = research_layer.build_run_inputs(req.symbol, skills, req.skill_parameters)
+        research_layer.validate_skill_support(skills, req.asset_type)
+        inputs = research_layer.build_run_inputs(req.symbol, skills, req.skill_parameters, req.asset_type)
+    except research_layer.UnsupportedSkillAssetError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except research_layer.ResearchClientError as exc:
         raise HTTPException(502, str(exc)) from exc
     results_by_skill = {}
@@ -608,6 +710,7 @@ def research_run(req: ResearchRunReq):
                 market=inputs["market"],
                 skill_parameters={skill: req.skill_parameters.get(skill, {})},
                 price_series=inputs["price_series"],
+                asset_type=inputs.get("asset_type", req.asset_type),
             ): skill
             for skill in skills
         }
@@ -663,10 +766,13 @@ def _market_data_http_error(exc: market_data.MarketDataError) -> HTTPException:
 
 
 @app.get("/api/market-data/snapshot")
-def market_data_snapshot(symbol: str = Query(..., min_length=1, max_length=24)):
+def market_data_snapshot(
+    symbol: str = Query(..., min_length=1, max_length=24),
+    asset_type: str = Query("equity"),
+):
     """美股或欧洲原生上市股票快照；欧洲要求显式交易所后缀。"""
     try:
-        return {"data": market_data.get_snapshot(symbol)}
+        return {"data": market_data.get_snapshot(symbol) if asset_type == "equity" else market_data.get_snapshot(symbol, asset_type)}
     except market_data.MarketDataError as exc:
         raise _market_data_http_error(exc) from exc
 
@@ -676,10 +782,11 @@ def market_data_bars(
     symbol: str = Query(..., min_length=1, max_length=24),
     range_: str = Query("1y", alias="range"),
     interval: str = Query("1d"),
+    asset_type: str = Query("equity"),
 ):
     """美股/欧洲股票日线 OHLCV；价格已归一为交易币种主单位。"""
     try:
-        return {"data": market_data.get_bars(symbol, range_, interval)}
+        return {"data": market_data.get_bars(symbol, range_, interval) if asset_type == "equity" else market_data.get_bars(symbol, range_, interval, asset_type)}
     except market_data.MarketDataError as exc:
         raise _market_data_http_error(exc) from exc
 
