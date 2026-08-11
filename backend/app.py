@@ -38,6 +38,8 @@ import position_preferences
 import position_service
 import reflection as reflect_layer
 import research as research_layer
+import research_context
+import research_team
 
 app = FastAPI(title="Vibe-Research API", version="0.3.0")
 
@@ -267,11 +269,17 @@ def _ndjson(events):
     return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
+class ResearchContextIn(BaseModel):
+    name: str = Field(max_length=160)
+    content: str = Field(max_length=research_context.MAX_ITEM_CHARS)
+
+
 class DebateReq(BaseModel):
     code: str
     rounds: int = 1
     asset_type: str = "equity"
     llm: LLMConfig
+    additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
 
 
 @app.post("/api/debate")
@@ -288,7 +296,65 @@ def debate(req: DebateReq):
         raise HTTPException(400, "asset_type 仅支持 equity 或 crypto")
     cfg = _check_llm(req.llm)
     rounds = 2 if req.rounds >= 2 else 1
-    return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds, req.asset_type))
+    try:
+        contexts = research_context.normalize([item.model_dump() for item in req.additional_contexts])
+    except research_context.ResearchContextError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds, req.asset_type, contexts))
+
+
+class ResearchFileIn(BaseModel):
+    name: str = Field(max_length=160)
+    content_b64: str = Field(max_length=14_100_000)
+
+
+class ResearchFilesIn(BaseModel):
+    files: list[ResearchFileIn] = Field(min_length=1, max_length=research_context.MAX_ITEMS)
+
+
+@app.post("/api/research-context/extract")
+def research_context_extract(request: ResearchFilesIn):
+    """Extract transient research text in memory; never stores uploaded files."""
+    try:
+        return {"data": research_context.extract_files([item.model_dump() for item in request.files])}
+    except research_context.ResearchContextError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+class ResearchTeamReq(BaseModel):
+    code: str
+    asset_type: Literal["equity", "crypto"] = "equity"
+    llm: LLMConfig
+    additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
+    position_instrument_key: str | None = Field(default=None, max_length=64)
+
+
+@app.post("/api/research-team")
+def research_team_run(request: ResearchTeamReq):
+    position_text = ""
+    position_context = None
+    code = request.code
+    if request.position_instrument_key:
+        try:
+            provider_symbol, position_text, position_context = research_team.resolve_position(request.position_instrument_key)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if code.strip().upper() != provider_symbol:
+            raise HTTPException(400, "研究代码必须与所选 IBKR 持仓的行情代码一致")
+        code = provider_symbol
+    if request.asset_type == "crypto":
+        code = market_data.resolve_crypto_symbol(code).removesuffix("-USD")
+    else:
+        code = _validate_stock_symbol(code)
+    try:
+        contexts = research_context.normalize([item.model_dump() for item in request.additional_contexts])
+    except research_context.ResearchContextError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    cfg = _check_llm(request.llm)
+    response = _ndjson(lambda: research_team.run_stream(cfg, code, request.asset_type, contexts, position_text))
+    if position_context:
+        response.headers["X-Vibe-Position-Context"] = "selected-only"
+    return response
 
 
 class ReflectReq(BaseModel):

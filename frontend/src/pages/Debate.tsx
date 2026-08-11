@@ -1,37 +1,42 @@
-import { useRef, useState } from "react";
-import { Swords, Play, Square, Save, CheckCircle2, Circle, AlertTriangle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Swords, Play, Square, Save, CheckCircle2, Circle, AlertTriangle, Users, BriefcaseBusiness } from "lucide-react";
 import { SafeMarkdown } from "@/components/ui/SafeMarkdown";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
-import { debateStream, type DebateStage } from "@/lib/agents";
+import { ContextTray, type ContextEntry } from "@/components/research/ContextTray";
+import { debateStream, researchTeamStream, type DebateStage, type ResearchTeamStage } from "@/lib/agents";
 import { addNote } from "@/lib/notes";
-import { ApiError } from "@/lib/api";
+import { ApiError, api, type IbkrInstrument, type PositionPreferences, type RealPositionSnapshot } from "@/lib/api";
 import { normalizeCryptoSymbol, normalizeStockSymbol } from "@/lib/market-symbols";
+import { portfolioNumber, portfolioRatioPercent, portfolioSigned } from "@/lib/portfolio-format";
 
-interface StageBox {
-  stage: DebateStage;
-  label: string;
-  content: string;
-  done: boolean;
-}
+type Mode = "debate" | "team";
+type Stage = DebateStage | ResearchTeamStage;
+interface StageBox { stage: Stage; label: string; content: string; done: boolean }
 
-// 多方用品牌橙、空方用蓝灰、主持用中性——刻意不用红绿，
-// 避免把辩论角色误读成涨跌信号。
-const STAGE_TONE: Record<DebateStage, string> = {
-  bull: "border-primary/50 bg-primary/[0.06]",
-  bull_rebut: "border-primary/30 bg-primary/[0.03]",
-  bear: "border-sky-500/40 bg-sky-500/[0.06]",
-  bear_rebut: "border-sky-500/25 bg-sky-500/[0.03]",
-  referee: "border-border bg-background/40",
+const STAGE_TONE: Record<Stage, string> = {
+  bull: "border-primary/50 bg-primary/[0.06]", bull_rebut: "border-primary/30 bg-primary/[0.03]",
+  bear: "border-sky-500/40 bg-sky-500/[0.06]", bear_rebut: "border-sky-500/25 bg-sky-500/[0.03]",
+  referee: "border-border bg-background/40", fundamentals: "border-violet-500/35 bg-violet-500/[0.05]",
+  market: "border-cyan-500/35 bg-cyan-500/[0.05]", events: "border-amber-500/35 bg-amber-500/[0.05]",
+  lead: "border-primary/40 bg-primary/[0.05]",
 };
 
-const DOSSIER_HINT = "多空双方拿到的是同一份接口实时拉取的数据，谁也不能靠编数字赢。";
-
 export function Debate() {
-  const [assetType, setAssetType] = useState<"equity" | "crypto">("equity");
-  const [code, setCode] = useState("");
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<Mode>(params.get("mode") === "team" ? "team" : "debate");
+  const [assetType, setAssetType] = useState<"equity" | "crypto">(params.get("asset_type") === "crypto" ? "crypto" : "equity");
+  const [code, setCode] = useState(params.get("code")?.toUpperCase() || "");
   const [rounds, setRounds] = useState(1);
+  const [contexts, setContexts] = useState<ContextEntry[]>([]);
+  const [usePosition, setUsePosition] = useState(params.get("position_context") === "1");
+  const [positions, setPositions] = useState<IbkrInstrument[]>([]);
+  const [snapshot, setSnapshot] = useState<RealPositionSnapshot | null>(null);
+  const [preferences, setPreferences] = useState<PositionPreferences | null>(null);
+  const [selectedPosition, setSelectedPosition] = useState(params.get("position") || "");
+  const [positionError, setPositionError] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState<{ title: string; ok: boolean }[]>([]);
@@ -39,177 +44,100 @@ export function Debate() {
   const [stages, setStages] = useState<StageBox[]>([]);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [completed, setCompleted] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const reset = () => {
-    setStatus(""); setProgress([]); setMissing([]); setStages([]); setError(""); setSaved(false);
-  };
+  useEffect(() => {
+    if (!usePosition || mode !== "team") return;
+    Promise.all([api.positionInstruments("open"), api.realPositions(), api.positionPreferences()]).then(([items, current, prefs]) => {
+      const eligible = items.filter((item) => !["CASH", "FX"].includes(item.asset_class) && item.provider_symbol);
+      setPositions(eligible); setSnapshot(current); setPreferences(prefs); setPositionError("");
+      const requested = selectedPosition && eligible.some((item) => item.instrument_key === selectedPosition) ? selectedPosition : eligible[0]?.instrument_key || "";
+      setSelectedPosition(requested);
+      const selected = eligible.find((item) => item.instrument_key === requested);
+      if (selected?.provider_symbol) { setCode(selected.provider_symbol); setAssetType("equity"); }
+    }).catch((reason) => setPositionError(reason instanceof ApiError ? reason.message : "无法加载开放持仓"));
+  }, [usePosition, mode]); // selectedPosition is intentionally initialized from the URL once
+
+  const selectedInstrument = positions.find((item) => item.instrument_key === selectedPosition);
+  const selectedSnapshotRow = useMemo(() => selectedInstrument && snapshot?.positions.find((row) =>
+    row.account_ref === selectedInstrument.account_ref && row.symbol === selectedInstrument.symbol && row.currency === selectedInstrument.currency && (row.venue || "") === (selectedInstrument.venue || ""),
+  ), [selectedInstrument, snapshot]);
+  const selectedWeight = selectedSnapshotRow?.reporting_market_value != null && snapshot?.summary.nav
+    ? Math.abs(selectedSnapshotRow.reporting_market_value) / Math.abs(snapshot.summary.nav) : null;
+
+  const reset = () => { setStatus(""); setProgress([]); setMissing([]); setStages([]); setError(""); setSaved(false); setCompleted(false); };
+  const switchMode = (next: Mode) => { if (running) return; setMode(next); reset(); if (next === "debate") setUsePosition(false); };
 
   async function start() {
     const c = assetType === "crypto" ? normalizeCryptoSymbol(code) : normalizeStockSymbol(code);
     if (!c) { setError(assetType === "crypto" ? "请输入 BTC、ETH、SOL 等加密货币代码" : "请输入 A 股、美股或带交易所后缀的欧洲股票代码"); return; }
-    setCode(c);
-    reset();
-    setRunning(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    if (mode === "team" && usePosition && !selectedPosition) { setError("请选择一个开放持仓"); return; }
+    const cleanContexts = contexts.filter((item) => item.content.trim()).map(({ name, content }) => ({ name: name.trim() || "未命名材料", content: content.trim() }));
+    if (cleanContexts.reduce((sum, item) => sum + item.content.length, 0) > 50_000) { setError("补充材料合计超过 50,000 字符上限"); return; }
+    setCode(c); reset(); setRunning(true);
+    const ctrl = new AbortController(); abortRef.current = ctrl;
+    let streamDone = false;
+    let streamHadError = false;
+    const handlers = {
+      onStatus: setStatus,
+      onDossierProgress: (title: string, ok: boolean, loaded: number, total: number) => { setStatus(`正在拉取客观事实底稿… ${loaded}/${total}`); setProgress((current) => [...current, { title, ok }]); },
+      onDossierReady: (_sections: {title: string; tool: string}[], miss: string[]) => { setMissing(miss); setStatus(mode === "team" ? "底稿就绪，研究团队开始工作" : "底稿就绪，辩论开始"); },
+      onStageStart: (stage: Stage, label: string) => setStages((current) => [...current, { stage, label, content: "", done: false }]),
+      onDelta: (stage: Stage, text: string) => setStages((current) => current.map((item) => item.stage === stage && !item.done ? { ...item, content: item.content + text } : item)),
+      onStageDone: (stage: Stage, _label: string, content: string) => setStages((current) => current.map((item) => item.stage === stage && !item.done ? { ...item, content, done: true } : item)),
+      onError: (message: string, stage?: Stage) => { streamHadError = true; setError(stage ? `${stage}：${message}` : message); },
+      onDone: () => { streamDone = true; setCompleted(true); },
+    };
     try {
-      await debateStream(c, rounds, {
-        onStatus: setStatus,
-        onDossierProgress: (title, ok, loaded, total) => {
-          setStatus(`正在拉取客观事实底稿… ${loaded}/${total}`);
-          setProgress((p) => [...p, { title, ok }]);
-        },
-        onDossierReady: (_sections, miss) => { setMissing(miss); setStatus("底稿就绪，辩论开始"); },
-        onStageStart: (stage, label) =>
-          setStages((s) => [...s, { stage, label, content: "", done: false }]),
-        onDelta: (stage, text) =>
-          setStages((s) => s.map((b) => (b.stage === stage && !b.done ? { ...b, content: b.content + text } : b))),
-        onStageDone: (stage, _label, content) =>
-          setStages((s) => s.map((b) => (b.stage === stage && !b.done ? { ...b, content, done: true } : b))),
-        onError: (message, stage) => setError(stage ? `${stage}：${message}` : message),
-      }, ctrl.signal, assetType);
-      setStatus("辩论完成");
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") setStatus("已中止");
-      else setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setRunning(false);
-      abortRef.current = null;
-    }
+      if (mode === "team") await researchTeamStream(c, handlers, ctrl.signal, assetType, cleanContexts, usePosition ? selectedPosition : undefined);
+      else await debateStream(c, rounds, handlers, ctrl.signal, assetType, cleanContexts);
+      setStatus(streamDone
+        ? `${mode === "team" ? "研究团队" : "辩论"}${streamHadError ? "部分完成" : "完成"}`
+        : `${mode === "team" ? "研究团队" : "辩论"}未完整结束`);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") setStatus("已中止");
+      else setError(reason instanceof ApiError ? reason.message : String(reason));
+    } finally { setRunning(false); abortRef.current = null; }
   }
 
-  function stop() {
-    abortRef.current?.abort();
-    setRunning(false);
-  }
+  const stop = () => { abortRef.current?.abort(); setRunning(false); };
+  const finished = completed && stages.length > 0 && stages.every((item) => item.done);
+  const save = () => {
+    const body = [contexts.length ? `补充材料：${contexts.map((item) => item.name).join("、")}` : "", ...stages.map((item) => `## ${item.label}\n\n${item.content}`)].filter(Boolean).join("\n\n---\n\n");
+    const kind = mode === "team" ? "研究团队" : "多空辩论";
+    addNote(kind, `${kind} · ${code.trim()}`, body); setSaved(true);
+  };
 
-  function save() {
-    const body = stages.map((s) => `## ${s.label}\n\n${s.content}`).join("\n\n---\n\n");
-    addNote("多空辩论", `多空辩论 · ${code.trim()}`, body);
-    setSaved(true);
-  }
-
-  const finished = stages.length > 0 && stages.every((s) => s.done);
-
-  return (
-    <div>
-      <PageHeader
-        title="多空辩论"
-        subtitle="同一份客观数据，多方与空方各自立论、互相质疑，最后由中立主持归纳分歧点与验证清单——不给买卖结论，判断留给你自己。"
-      />
-
-      <GlassCard>
-        <div className="flex flex-wrap items-end gap-3">
-          <div><label className="mb-1 block text-xs text-muted-foreground">资产类型</label><select value={assetType} onChange={(event) => { setAssetType(event.target.value as "equity" | "crypto"); setCode(""); reset(); }} disabled={running} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm"><option value="equity">股票</option><option value="crypto">加密货币</option></select></div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">{assetType === "crypto" ? "加密货币代码" : "股票代码"}</label>
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))}
-              onKeyDown={(e) => { if (e.key === "Enter" && !running) start(); }}
-              placeholder={assetType === "crypto" ? "BTC / ETH / SOL" : "600519 / AAPL / VOD.L"}
-              disabled={running}
-              className="w-56 rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-sm outline-none focus:border-primary/60"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">辩论深度</label>
-            <select
-              value={rounds}
-              onChange={(e) => setRounds(Number(e.target.value))}
-              disabled={running}
-              className="rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm outline-none focus:border-primary/60"
-            >
-              <option value={1}>一轮 · 各自陈述</option>
-              <option value={2}>两轮 · 加交叉反驳</option>
-            </select>
-          </div>
-          {running ? (
-            <button onClick={stop}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-4 py-2 text-sm hover:text-destructive">
-              <Square className="h-4 w-4" /> 中止
-            </button>
-          ) : (
-            <button onClick={start}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary/90 px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary">
-              <Play className="h-4 w-4" /> 开始辩论
-            </button>
-          )}
-          {finished && !running && (
-            <button onClick={save} disabled={saved}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-4 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50">
-              <Save className="h-4 w-4" /> {saved ? "已存入沉淀" : "存入沉淀"}
-            </button>
-          )}
-        </div>
-
-        {/* 开销提示：辩论比问答重得多，让用户在点下去之前就知道要花多久、调几次模型 */}
-        {!running && !status && (
-          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/70">
-            ⏱ {rounds === 2
-              ? "两轮约 3 分钟 · 5 次模型调用 · 约 6 万字进上下文"
-              : "一轮约 100 秒 · 3 次模型调用 · 约 3.5 万字进上下文"}
-            （每个角色都会带上完整底稿）。其中拉底稿约 35 秒、走公开数据接口，不消耗 token。
-            省额度可用「订阅接入」的本机 CLI，或选中档模型——数据已备齐，模型只做组织和表达。
-          </p>
-        )}
-
-        {status && <p className="mt-3 text-xs text-muted-foreground">{status}</p>}
-        {error && (
-          <p className="mt-3 flex items-start gap-1.5 text-xs text-destructive">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
-          </p>
-        )}
-
-        {progress.length > 0 && (
-          <div className="mt-4 border-t border-border/40 pt-3">
-            <p className="mb-2 text-[11px] text-muted-foreground">{DOSSIER_HINT}</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-              {progress.map((p) => (
-                <span key={p.title} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                  {p.ok
-                    ? <CheckCircle2 className="h-3 w-3 text-primary/70" />
-                    : <Circle className="h-3 w-3 text-muted-foreground/40" />}
-                  {p.title}
-                </span>
-              ))}
-            </div>
-            {missing.length > 0 && (
-              <p className="mt-2 text-[11px] text-warning">
-                未取到：{missing.join("、")}（双方立论时不得臆测这部分）
-              </p>
-            )}
-          </div>
-        )}
-      </GlassCard>
-
-      <div className="mt-4 space-y-4">
-        {stages.map((s) => (
-          <div key={s.stage} className={`rounded-xl border p-4 ${STAGE_TONE[s.stage]}`}>
-            <div className="mb-2 flex items-center gap-2">
-              <Swords className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold">{s.label}</span>
-              {!s.done && <span className="animate-pulse text-[11px] text-muted-foreground">生成中…</span>}
-            </div>
-            <div className="prose prose-sm prose-invert max-w-none text-foreground prose-table:text-sm">
-              <SafeMarkdown>{s.content || "…"}</SafeMarkdown>
-            </div>
-          </div>
-        ))}
+  return <div>
+    <PageHeader title="多视角研究" subtitle="同一份客观数据，可选择多空辩论或专项研究团队。补充材料始终与接口事实分开标注，不生成交易指令。" />
+    <GlassCard>
+      <div className="mb-4 flex w-fit gap-1 rounded-lg border border-border/60 bg-muted/20 p-1">
+        <button onClick={() => switchMode("debate")} className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm ${mode === "debate" ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}><Swords className="h-4 w-4" />多空辩论</button>
+        <button onClick={() => switchMode("team")} className={`inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm ${mode === "team" ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}><Users className="h-4 w-4" />研究团队</button>
       </div>
-
-      {stages.length === 0 && !running && (
-        <GlassCard className="mt-4">
-          <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-muted-foreground">
-            <Swords className="h-8 w-8 text-muted-foreground/40" />
-            输入一个代码开始。后端会先拉一份客观事实底稿，再让多方 / 空方基于同一份数据互相质疑。
-            <span className="text-xs">产出的是「分歧点 + 验证清单」，不是买卖建议。</span>
-          </div>
-        </GlassCard>
-      )}
-
-      <Disclaimer />
-    </div>
-  );
+      <div className="flex flex-wrap items-end gap-3">
+        <div><label className="mb-1 block text-xs text-muted-foreground">资产类型</label><select value={assetType} onChange={(event) => { setAssetType(event.target.value as "equity" | "crypto"); setCode(""); reset(); }} disabled={running || usePosition} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm"><option value="equity">股票</option><option value="crypto">加密货币</option></select></div>
+        <div><label className="mb-1 block text-xs text-muted-foreground">{assetType === "crypto" ? "加密货币代码" : "股票代码"}</label><input value={code} onChange={(event) => setCode(event.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))} onKeyDown={(event) => { if (event.key === "Enter" && !running) start(); }} placeholder={assetType === "crypto" ? "BTC / ETH / SOL" : "600519 / AAPL / VOD.L"} disabled={running || usePosition} className="w-56 rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-sm outline-none focus:border-primary/60" /></div>
+        {mode === "debate" && <div><label className="mb-1 block text-xs text-muted-foreground">辩论深度</label><select value={rounds} onChange={(event) => setRounds(Number(event.target.value))} disabled={running} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm"><option value={1}>一轮 · 各自陈述</option><option value={2}>两轮 · 加交叉反驳</option></select></div>}
+        {running ? <button onClick={stop} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-4 py-2 text-sm hover:text-destructive"><Square className="h-4 w-4" />中止</button> : <button onClick={start} className="inline-flex items-center gap-1.5 rounded-lg bg-primary/90 px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary"><Play className="h-4 w-4" />{mode === "team" ? "启动研究团队" : "开始辩论"}</button>}
+        {finished && !running && <button onClick={save} disabled={saved} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-4 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"><Save className="h-4 w-4" />{saved ? "已存入沉淀" : "存入沉淀"}</button>}
+      </div>
+      {mode === "team" && <div className="mt-4 rounded-xl border border-border/50 bg-background/20 p-3">
+        <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={usePosition} onChange={(event) => { setUsePosition(event.target.checked); setPositionError(""); }} disabled={running || assetType === "crypto"} /> <BriefcaseBusiness className="h-4 w-4 text-primary" />使用单个开放持仓上下文</label>
+        {usePosition && <div className="mt-3"><select value={selectedPosition} onChange={(event) => { const key = event.target.value; setSelectedPosition(key); const selected = positions.find((item) => item.instrument_key === key); if (selected?.provider_symbol) { setCode(selected.provider_symbol); setAssetType("equity"); } }} disabled={running} className="w-full rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm"><option value="">选择开放持仓</option>{positions.map((item) => <option key={item.instrument_key} value={item.instrument_key}>{item.symbol} · {item.name} · {item.quantity ?? "—"} · {item.venue || item.currency}</option>)}</select>
+          {selectedInstrument && <div className="mt-2 rounded-lg bg-muted/20 p-2 text-[11px] leading-relaxed text-muted-foreground"><strong className="text-foreground">将发送：</strong> {selectedInstrument.provider_symbol} · {selectedInstrument.venue || "交易所未提供"} · {selectedInstrument.currency} · 数量 {portfolioNumber(selectedSnapshotRow?.quantity ?? selectedInstrument.quantity)} · 成本 {portfolioNumber(selectedSnapshotRow?.average_cost ?? selectedInstrument.average_cost)} · 标记价 {portfolioNumber(selectedSnapshotRow?.latest_price)} · 未实现盈亏 {portfolioSigned(selectedSnapshotRow?.unrealized_pnl)} · NAV {portfolioNumber(snapshot?.summary.nav)} {snapshot?.summary.reporting_currency || ""} · NAV占比 {portfolioRatioPercent(selectedWeight)} · 快照 {snapshot?.report_date || "—"}。不会发送其他持仓。<div className="mt-1"><strong className="text-foreground">投资目标与风险偏好：</strong>{preferences?.items.length ? <ul className="ml-4 list-disc">{preferences.items.map((item) => <li key={item}>{item}</li>)}</ul> : " 未设置"}</div></div>}
+        </div>}
+        {positionError && <p className="mt-2 text-xs text-destructive">{positionError}</p>}
+      </div>}
+      <ContextTray entries={contexts} onChange={setContexts} disabled={running} />
+      {!running && !status && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/70">⏱ {mode === "team" ? "研究团队共 4 次模型调用：3 位专项研究员 + 1 位中立负责人。" : rounds === 2 ? "两轮约 5 次模型调用。" : "一轮约 3 次模型调用。"} 客观底稿只拉取一次。</p>}
+      {status && <p className="mt-3 text-xs text-muted-foreground">{status}</p>}
+      {error && <p className="mt-3 flex items-start gap-1.5 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{error}</p>}
+      {progress.length > 0 && <div className="mt-4 border-t border-border/40 pt-3"><p className="mb-2 text-[11px] text-muted-foreground">所有角色共享同一份接口事实底稿；补充材料另行标记。</p><div className="flex flex-wrap gap-x-4 gap-y-1.5">{progress.map((item) => <span key={item.title} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">{item.ok ? <CheckCircle2 className="h-3 w-3 text-primary/70" /> : <Circle className="h-3 w-3 text-muted-foreground/40" />}{item.title}</span>)}</div>{missing.length > 0 && <p className="mt-2 text-[11px] text-warning">未取到：{missing.join("、")}（角色不得臆测）</p>}</div>}
+    </GlassCard>
+    <div className="mt-4 space-y-4">{stages.map((item) => <div key={item.stage} className={`rounded-xl border p-4 ${STAGE_TONE[item.stage]}`}><div className="mb-2 flex items-center gap-2">{mode === "team" ? <Users className="h-4 w-4 text-muted-foreground" /> : <Swords className="h-4 w-4 text-muted-foreground" />}<span className="text-sm font-semibold">{item.label}</span>{!item.done && <span className="animate-pulse text-[11px] text-muted-foreground">生成中…</span>}</div><div className="prose prose-sm prose-invert max-w-none text-foreground prose-table:text-sm"><SafeMarkdown>{item.content || "…"}</SafeMarkdown></div></div>)}</div>
+    {stages.length === 0 && !running && <GlassCard className="mt-4"><div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-muted-foreground">{mode === "team" ? <Users className="h-8 w-8 text-muted-foreground/40" /> : <Swords className="h-8 w-8 text-muted-foreground/40" />}输入代码开始。{mode === "team" ? "三位专项研究员分别检查基本面、市场结构和事件风险，再由负责人综合分歧。" : "多方和空方基于同一份事实互相质疑。"}<span className="text-xs">产出研究证据与验证清单，不生成交易指令。</span></div></GlassCard>}
+    <Disclaimer />
+  </div>;
 }

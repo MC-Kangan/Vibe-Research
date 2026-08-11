@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Search, FileText, Newspaper, Loader2, AlertCircle, LineChart, BarChart3, Megaphone,
-  Wallet, Trophy, CalendarClock, Boxes, MessageSquare,
+  Wallet, Trophy, CalendarClock, Boxes, MessageSquare, Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -297,7 +298,7 @@ export function StockData() {
         title="标的数据"
         subtitle="股票与加密货币共享行情、图表和兼容技能；专项数据按能力明确区分"
         actions={(val || gstock || marketSnapshot) && (
-          <AskAiButton
+          <div className="flex flex-wrap gap-2"><AskAiButton
             workflow="stock"
             context={marketSnapshot ? marketAiContext : gstock ? gAiContext : aiContext}
             // 本页不换路由就能换标的，必须按代码分开存对话，否则会串台。
@@ -308,7 +309,7 @@ export function StockData() {
             suggestions={(gstock || marketSnapshot)
               ? (marketSnapshot?.instrument.asset_type === "crypto" ? ["价格结构有什么特征", "市场环境如何", "有哪些数据缺口"] : ["这家公司基本面怎么样", "盈利能力如何", "有什么风险"])
               : ["这个估值贵不贵", "机构一致预期怎么看", "近期研报的分歧点", "有什么风险"]}
-          />
+          /><Link to={`/debate?mode=team&asset_type=${assetType}&code=${encodeURIComponent(marketSnapshot?.instrument.provider_symbol || gstock?.code || val?.code || code)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-2 text-sm text-muted-foreground hover:text-primary"><Users className="h-4 w-4" />研究团队</Link></div>
         )}
       />
 

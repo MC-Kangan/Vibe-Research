@@ -23,6 +23,7 @@ import chat
 import cli_runtime
 import market_data
 import tools
+import research_context
 
 # 底稿抓取清单：覆盖「估值 / 财报 / 资金 / 事件 / 行业」五个面，与个股工作流框架对齐。
 # 每项 (工具名, 额外参数, 小标题, 可并行)。任何一项挂了都不阻断，缺项会如实标注。
@@ -323,7 +324,7 @@ def _stage_plan(rounds: int) -> list[str]:
     return ["bull", "bear", "referee"]
 
 
-def _build_messages(stage: str, facts: str, transcript: list[dict]) -> list[dict]:
+def _build_messages(stage: str, facts: str, transcript: list[dict], supplemental: str = "") -> list[dict]:
     """给某个角色拼消息。底稿始终在 system 里；已产生的发言作为上下文喂进去。"""
     system = f"{_ROLE_PROMPTS[stage]}\n\n{facts}"
     user_parts = []
@@ -331,6 +332,8 @@ def _build_messages(stage: str, facts: str, transcript: list[dict]) -> list[dict
         if stage == "bull" or (stage == "bear" and t["stage"] != "bull"):
             continue  # 首轮陈述：多方不看任何人，空方只看多方
         user_parts.append(f"【{_STAGE_LABEL[t['stage']]}的发言】\n{t['content']}")
+    if supplemental:
+        user_parts.append(supplemental)
     if not user_parts:
         return [{"role": "system", "content": system},
                 {"role": "user", "content": "请基于底稿开始你的陈述。"}]
@@ -338,7 +341,13 @@ def _build_messages(stage: str, facts: str, transcript: list[dict]) -> list[dict
             {"role": "user", "content": "\n\n".join(user_parts) + "\n\n请按你的角色要求输出。"}]
 
 
-def run_debate_stream(cfg: dict, code: str, rounds: int = 1, asset_type: str = "equity"):
+def run_debate_stream(
+    cfg: dict,
+    code: str,
+    rounds: int = 1,
+    asset_type: str = "equity",
+    contexts: list[dict[str, str]] | None = None,
+):
     """跑一场辩论，yield NDJSON 事件。
 
     事件类型：dossier（底稿就绪）/ stage（角色开始）/ delta（增量文本）/
@@ -359,11 +368,12 @@ def run_debate_stream(cfg: dict, code: str, rounds: int = 1, asset_type: str = "
            "missing": dossier["missing"]}
 
     facts = dossier_text(dossier)
+    supplemental = research_context.prompt_text(contexts or [])
     transcript: list[dict] = []
 
     for stage in _stage_plan(rounds):
         yield {"type": "stage", "stage": stage, "label": _STAGE_LABEL[stage]}
-        messages = _build_messages(stage, facts, transcript)
+        messages = _build_messages(stage, facts, transcript, supplemental)
         buf: list[str] = []
         try:
             if is_cli:

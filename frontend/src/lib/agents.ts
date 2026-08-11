@@ -6,6 +6,8 @@ import { loadLlm } from "@/lib/llm";
 import { streamNdjson, type NdjsonEvent } from "@/lib/ndjson";
 
 export type DebateStage = "bull" | "bear" | "bull_rebut" | "bear_rebut" | "referee";
+export type ResearchTeamStage = "fundamentals" | "market" | "events" | "lead";
+export type ResearchContextItem = { name: string; content: string };
 
 export interface DebateHandlers {
   onStatus?: (message: string) => void;
@@ -15,6 +17,7 @@ export interface DebateHandlers {
   onDelta?: (stage: DebateStage, text: string) => void;
   onStageDone?: (stage: DebateStage, label: string, content: string) => void;
   onError?: (message: string, stage?: DebateStage) => void;
+  onDone?: () => void;
 }
 
 function requireLlm() {
@@ -46,6 +49,9 @@ function dispatchDebate(ev: NdjsonEvent, h: DebateHandlers) {
     case "error":
       h.onError?.(ev.message, ev.stage);
       break;
+    case "done":
+      h.onDone?.();
+      break;
   }
 }
 
@@ -56,9 +62,32 @@ export async function debateStream(
   handlers: DebateHandlers = {},
   signal?: AbortSignal,
   assetType: "equity" | "crypto" = "equity",
+  contexts: ResearchContextItem[] = [],
 ): Promise<void> {
   const llm = requireLlm();
-  await streamNdjson("/api/debate", { code, rounds, llm, asset_type: assetType }, (ev) => dispatchDebate(ev, handlers), signal);
+  await streamNdjson("/api/debate", { code, rounds, llm, asset_type: assetType, additional_contexts: contexts }, (ev) => dispatchDebate(ev, handlers), signal);
+}
+
+export interface ResearchTeamHandlers extends Omit<DebateHandlers, "onStageStart" | "onDelta" | "onStageDone" | "onError"> {
+  onStageStart?: (stage: ResearchTeamStage, label: string) => void;
+  onDelta?: (stage: ResearchTeamStage, text: string) => void;
+  onStageDone?: (stage: ResearchTeamStage, label: string, content: string) => void;
+  onError?: (message: string, stage?: ResearchTeamStage) => void;
+}
+
+export async function researchTeamStream(
+  code: string,
+  handlers: ResearchTeamHandlers = {},
+  signal?: AbortSignal,
+  assetType: "equity" | "crypto" = "equity",
+  contexts: ResearchContextItem[] = [],
+  positionInstrumentKey?: string,
+): Promise<void> {
+  const llm = requireLlm();
+  await streamNdjson("/api/research-team", {
+    code, llm, asset_type: assetType, additional_contexts: contexts,
+    position_instrument_key: positionInstrumentKey || null,
+  }, (ev) => dispatchDebate(ev, handlers as DebateHandlers), signal);
 }
 
 export interface ReflectHandlers {

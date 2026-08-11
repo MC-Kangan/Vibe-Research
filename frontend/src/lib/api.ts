@@ -71,6 +71,15 @@ export interface ResearchRunResponse {
   results: ResearchRunResult[];
 }
 
+export interface ExtractedResearchContext {
+  name: string;
+  content: string;
+  characters: number;
+  original_characters: number;
+  truncated: boolean;
+  pages: number | null;
+}
+
 export interface AuthSession {
   enabled: boolean;
   authenticated: boolean;
@@ -616,6 +625,8 @@ export const api = {
   researchSkills: () => get<ResearchSkillsResponse>("/research/skills"),
   runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}, assetType: "equity" | "crypto" = "equity") =>
     request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters, asset_type: assetType }),
+  extractResearchContexts: (files: Array<{ name: string; content_b64: string }>) =>
+    request<ExtractedResearchContext[]>("/research-context/extract", "POST", { files }),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),
