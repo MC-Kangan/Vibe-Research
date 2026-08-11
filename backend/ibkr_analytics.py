@@ -76,7 +76,10 @@ def initialize() -> None:
               quantity REAL NOT NULL,
               price REAL,
               fees REAL NOT NULL DEFAULT 0,
+              gross_amount REAL NOT NULL DEFAULT 0,
+              taxes REAL NOT NULL DEFAULT 0,
               net_cash REAL,
+              description TEXT,
               external_id TEXT,
               source TEXT NOT NULL DEFAULT 'ibkr-flex'
             );
@@ -109,8 +112,26 @@ def initialize() -> None:
               commissions REAL NOT NULL,
               dividends REAL NOT NULL,
               interest REAL NOT NULL,
+              flow_data_available INTEGER NOT NULL DEFAULT 0,
               PRIMARY KEY (account_ref, report_date, currency)
             );
+            CREATE TABLE IF NOT EXISTS ibkr_reconciliations (
+              reconciliation_key TEXT PRIMARY KEY,
+              account_ref TEXT NOT NULL,
+              account_label TEXT NOT NULL,
+              observed_at TEXT NOT NULL,
+              currency TEXT NOT NULL,
+              broker_nav REAL NOT NULL,
+              calculated_nav REAL NOT NULL,
+              nav_difference REAL NOT NULL,
+              broker_cash REAL,
+              calculated_cash REAL NOT NULL,
+              cash_difference REAL,
+              status TEXT NOT NULL,
+              source TEXT NOT NULL DEFAULT 'ibkr-flex'
+            );
+            CREATE INDEX IF NOT EXISTS idx_ibkr_reconciliations_account
+              ON ibkr_reconciliations(account_ref, observed_at);
             CREATE TABLE IF NOT EXISTS ibkr_daily_pnl (
               account_ref TEXT NOT NULL,
               report_date TEXT NOT NULL,
@@ -141,6 +162,27 @@ def initialize() -> None:
             );
             """
         )
+        _ensure_trade_ledger_columns(db)
+        _ensure_daily_nav_columns(db)
+
+
+def _ensure_trade_ledger_columns(db: sqlite3.Connection) -> None:
+    """Keep an existing local ledger usable as its broker fact set grows."""
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(ibkr_trades)")}
+    additions = {
+        "gross_amount": "gross_amount REAL NOT NULL DEFAULT 0",
+        "taxes": "taxes REAL NOT NULL DEFAULT 0",
+        "description": "description TEXT",
+    }
+    for name, definition in additions.items():
+        if name not in columns:
+            db.execute(f"ALTER TABLE ibkr_trades ADD COLUMN {definition}")
+
+
+def _ensure_daily_nav_columns(db: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(ibkr_daily_nav)")}
+    if "flow_data_available" not in columns:
+        db.execute("ALTER TABLE ibkr_daily_nav ADD COLUMN flow_data_available INTEGER NOT NULL DEFAULT 0")
 
 
 def _now() -> str:
@@ -165,6 +207,10 @@ def _attr(node: Any, *keys: str, default: str = "") -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return default
+
+
+def _has_attr(node: Any, *keys: str) -> bool:
+    return any(key in getattr(node, "attrib", {}) and str(node.attrib[key]).strip() for key in keys)
 
 
 def _parse_datetime(node: Any) -> str:
@@ -273,8 +319,13 @@ def _parse_current_trades(root: Any) -> list[dict[str, Any]]:
             "side": side,
             "quantity": abs(_decimal(node, "quantity", "tradeQuantity")),
             "price": _decimal(node, "tradePrice", "price", default=0.0),
-            "fees": abs(_decimal(node, "ibCommission", "commission")),
+            # Preserve broker economics rather than reconstructing them later.
+            # IBKR normally reports commissions and taxes as signed cash effects.
+            "fees": _decimal(node, "ibCommission", "commission"),
+            "gross_amount": _decimal(node, "proceeds"),
+            "taxes": _decimal(node, "taxes"),
             "net_cash": _decimal(node, "netCash", default=0.0),
+            "description": _attr(node, "description") or None,
             "external_id": external_id,
             "source": "ibkr-flex",
             "instrument": item,
@@ -290,14 +341,82 @@ def _insert_current_data(root: Any) -> int:
             _upsert_instrument(db, trade.pop("instrument"))
             db.execute(
                 """INSERT INTO ibkr_trades
-                (trade_key, account_ref, account_label, instrument_key, symbol, name, asset_class, currency, venue, occurred_at, side, quantity, price, fees, net_cash, external_id, source)
-                VALUES (:trade_key, :account_ref, :account_label, :instrument_key, :symbol, :name, :asset_class, :currency, :venue, :occurred_at, :side, :quantity, :price, :fees, :net_cash, :external_id, :source)
+                (trade_key, account_ref, account_label, instrument_key, symbol, name, asset_class, currency, venue, occurred_at, side, quantity, price, fees, gross_amount, taxes, net_cash, description, external_id, source)
+                VALUES (:trade_key, :account_ref, :account_label, :instrument_key, :symbol, :name, :asset_class, :currency, :venue, :occurred_at, :side, :quantity, :price, :fees, :gross_amount, :taxes, :net_cash, :description, :external_id, :source)
                 ON CONFLICT(trade_key) DO UPDATE SET
                   occurred_at=excluded.occurred_at, side=excluded.side, quantity=excluded.quantity,
-                  price=excluded.price, fees=excluded.fees, net_cash=excluded.net_cash""",
+                  price=excluded.price, fees=excluded.fees, gross_amount=excluded.gross_amount,
+                  taxes=excluded.taxes, net_cash=excluded.net_cash,
+                  description=excluded.description""",
                 trade,
             )
+        _insert_reconciliations(db, root)
     return len(trades)
+
+
+def _insert_reconciliations(db: sqlite3.Connection, root: Any) -> None:
+    """Persist an account-level broker check when the statement has enough facts."""
+    latest_equity: dict[str, Any] = {}
+    for node in root.findall(".//EquitySummaryByReportDateInBase"):
+        account_id = _attr(node, "accountId", "fromAccountId")
+        report_date = _attr(node, "reportDate")
+        current = latest_equity.get(account_id)
+        if account_id and report_date and (current is None or report_date > _attr(current, "reportDate")):
+            latest_equity[account_id] = node
+
+    base_cash: dict[str, float] = {}
+    for node in root.findall(".//CashReportCurrency"):
+        account_id = _attr(node, "accountId", "fromAccountId")
+        if account_id and _attr(node, "levelOfDetail").lower() == "basecurrency" and _has_attr(node, "endingCash"):
+            base_cash[account_id] = _decimal(node, "endingCash")
+
+    securities: dict[str, float] = {}
+    for node in root.findall(".//OpenPosition"):
+        account_id = _attr(node, "accountId", "fromAccountId")
+        if not account_id:
+            continue
+        securities[account_id] = securities.get(account_id, 0.0) + _decimal(node, "positionValue") * _decimal(node, "fxRateToBase", default=1.0)
+
+    tolerance = 0.02
+    for account_id, node in latest_equity.items():
+        if account_id not in base_cash or not _has_attr(node, "total"):
+            continue
+        report_date = _attr(node, "reportDate")
+        broker_nav = _decimal(node, "total")
+        calculated_cash = base_cash[account_id]
+        calculated_nav = securities.get(account_id, 0.0) + calculated_cash
+        broker_cash = _decimal(node, "cash") if _has_attr(node, "cash") else None
+        nav_difference = calculated_nav - broker_nav
+        cash_difference = calculated_cash - broker_cash if broker_cash is not None else None
+        matched = abs(nav_difference) <= tolerance and (cash_difference is None or abs(cash_difference) <= tolerance)
+        row = {
+            "reconciliation_key": hashlib.sha256(f"ibkr-flex:{account_id}:{report_date}".encode()).hexdigest(),
+            "account_ref": _account_ref(account_id),
+            "account_label": _account_label(account_id),
+            "observed_at": _parse_date(report_date) or report_date,
+            "currency": _attr(node, "currency", default="USD").upper(),
+            "broker_nav": broker_nav,
+            "calculated_nav": calculated_nav,
+            "nav_difference": nav_difference,
+            "broker_cash": broker_cash,
+            "calculated_cash": calculated_cash,
+            "cash_difference": cash_difference,
+            "status": "matched" if matched else "warning",
+            "source": "ibkr-flex",
+        }
+        db.execute(
+            """INSERT INTO ibkr_reconciliations
+            (reconciliation_key, account_ref, account_label, observed_at, currency, broker_nav, calculated_nav,
+             nav_difference, broker_cash, calculated_cash, cash_difference, status, source)
+            VALUES (:reconciliation_key, :account_ref, :account_label, :observed_at, :currency, :broker_nav, :calculated_nav,
+                    :nav_difference, :broker_cash, :calculated_cash, :cash_difference, :status, :source)
+            ON CONFLICT(reconciliation_key) DO UPDATE SET
+              broker_nav=excluded.broker_nav, calculated_nav=excluded.calculated_nav,
+              nav_difference=excluded.nav_difference, broker_cash=excluded.broker_cash,
+              calculated_cash=excluded.calculated_cash, cash_difference=excluded.cash_difference,
+              status=excluded.status""",
+            row,
+        )
 
 
 def _insert_current_instruments(root: Any) -> None:
@@ -335,6 +454,7 @@ def _history_rows(root: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]
                 "commissions": _decimal(nav, "commissions"),
                 "dividends": _decimal(nav, "dividends"),
                 "interest": _decimal(nav, "interest"),
+                "flow_data_available": 1 if _has_attr(nav, "startingValue") and _has_attr(nav, "endingValue") and _has_attr(nav, "depositsWithdrawals") else 0,
             })
         for node in statement.findall(".//MTMPerformanceSummaryUnderlying"):
             report_date = _parse_date(_attr(node, "reportDate")) or fallback
@@ -366,13 +486,17 @@ def _insert_history(root: Any) -> tuple[int, int, str | None]:
     with _DB_LOCK, _connection() as db:
         for row in nav_rows:
             db.execute(
-                """INSERT INTO ibkr_daily_nav VALUES
-                (:account_ref, :report_date, :currency, :starting_value, :ending_value, :mtm, :realized, :change_in_unrealized, :deposits_withdrawals, :commissions, :dividends, :interest)
+                """INSERT INTO ibkr_daily_nav
+                (account_ref, report_date, currency, starting_value, ending_value, mtm, realized,
+                 change_in_unrealized, deposits_withdrawals, commissions, dividends, interest, flow_data_available)
+                VALUES (:account_ref, :report_date, :currency, :starting_value, :ending_value, :mtm, :realized,
+                        :change_in_unrealized, :deposits_withdrawals, :commissions, :dividends, :interest, :flow_data_available)
                 ON CONFLICT(account_ref, report_date, currency) DO UPDATE SET
                   starting_value=excluded.starting_value, ending_value=excluded.ending_value,
                   mtm=excluded.mtm, realized=excluded.realized, change_in_unrealized=excluded.change_in_unrealized,
                   deposits_withdrawals=excluded.deposits_withdrawals, commissions=excluded.commissions,
-                  dividends=excluded.dividends, interest=excluded.interest""",
+                  dividends=excluded.dividends, interest=excluded.interest,
+                  flow_data_available=excluded.flow_data_available""",
                 row,
             )
         for row in pnl_rows:
@@ -511,6 +635,43 @@ def _cutoff(range_name: str) -> str | None:
     return (today - timedelta(days=days)).isoformat()
 
 
+def _performance(nav_rows: list[sqlite3.Row], mixed_currency: bool) -> dict[str, Any]:
+    unavailable = {
+        "method": "unavailable",
+        "coverage": "unavailable",
+        "flow_adjusted_return": None,
+        "max_drawdown": None,
+        "observations": len(nav_rows),
+    }
+    if not nav_rows:
+        return {**unavailable, "reason": "No IBKR NAV history is available for this range."}
+    if mixed_currency:
+        return {**unavailable, "reason": "Performance cannot be aggregated across multiple account base currencies."}
+    if any(not row["flow_data_available"] for row in nav_rows):
+        return {**unavailable, "reason": "IBKR history does not include deposits and withdrawals for every day in this range."}
+    if any(float(row["starting_value"] or 0) <= 0 for row in nav_rows):
+        return {**unavailable, "reason": "A positive starting NAV is required for every day in this range."}
+
+    performance_index = 1.0
+    peak = performance_index
+    max_drawdown = 0.0
+    for row in nav_rows:
+        starting = float(row["starting_value"])
+        ending = float(row["ending_value"])
+        flow = float(row["deposits_withdrawals"] or 0)
+        performance_index *= 1 + ((ending - starting - flow) / starting)
+        peak = max(peak, performance_index)
+        max_drawdown = min(max_drawdown, (performance_index - peak) / peak)
+    return {
+        "method": "broker_flow_adjusted",
+        "coverage": "complete",
+        "flow_adjusted_return": performance_index - 1,
+        "max_drawdown": max_drawdown,
+        "observations": len(nav_rows),
+        "reason": None,
+    }
+
+
 def analytics(range_name: str = "3m") -> dict[str, Any]:
     initialize()
     snapshot = position_service.get_current()
@@ -518,7 +679,15 @@ def analytics(range_name: str = "3m") -> dict[str, Any]:
     with _DB_LOCK, _connection() as db:
         nav_where = "WHERE report_date >= ?" if cutoff else ""
         nav_params = (cutoff,) if cutoff else ()
-        nav_rows = db.execute(f"SELECT report_date, currency, SUM(starting_value) starting_value, SUM(ending_value) ending_value, SUM(mtm) mtm FROM ibkr_daily_nav {nav_where} GROUP BY report_date, currency ORDER BY report_date", nav_params).fetchall()
+        nav_rows = db.execute(
+            f"""SELECT report_date, currency, SUM(starting_value) starting_value,
+            SUM(ending_value) ending_value, SUM(mtm) mtm,
+            SUM(deposits_withdrawals) deposits_withdrawals,
+            MIN(flow_data_available) flow_data_available
+            FROM ibkr_daily_nav {nav_where}
+            GROUP BY report_date, currency ORDER BY report_date""",
+            nav_params,
+        ).fetchall()
         latest_date = max((row["report_date"] for row in nav_rows), default=None)
         latest_rows = [row for row in nav_rows if row["report_date"] == latest_date]
         latest = latest_rows[0] if len(latest_rows) == 1 else None
@@ -530,6 +699,15 @@ def analytics(range_name: str = "3m") -> dict[str, Any]:
             "SELECT * FROM ibkr_daily_pnl WHERE is_total = 0 AND report_date = ? ORDER BY ABS(total) DESC LIMIT 12",
             (latest_contributor_date,),
         ).fetchall() if latest_contributor_date else []
+        reconciliations = db.execute(
+            """SELECT item.* FROM ibkr_reconciliations item
+            JOIN (SELECT account_ref, MAX(observed_at) observed_at FROM ibkr_reconciliations GROUP BY account_ref) latest
+              ON latest.account_ref = item.account_ref AND latest.observed_at = item.observed_at
+            ORDER BY item.account_label"""
+        ).fetchall()
+        transactions = db.execute(
+            "SELECT * FROM ibkr_trades ORDER BY occurred_at DESC, trade_key DESC LIMIT 50"
+        ).fetchall()
     daily = []
     previous = None
     for row in nav_rows:
@@ -548,9 +726,13 @@ def analytics(range_name: str = "3m") -> dict[str, Any]:
     reporting_currencies = {row.get("reporting_currency") for row in valued if row.get("reporting_currency")}
     history_currencies = {row["currency"] for row in nav_rows}
     mixed_currency = len(reporting_currencies | history_currencies) > 1
+    performance = _performance(nav_rows, mixed_currency)
     warnings: list[str] = []
     if mixed_currency:
         warnings.append("Multiple account base currencies; aggregate NAV, exposure, allocation, and contributors are unavailable.")
+    warning_reconciliations = [row for row in reconciliations if row["status"] == "warning"]
+    if warning_reconciliations:
+        warnings.append(f"IBKR reconciliation found {len(warning_reconciliations)} account mismatch(es); positions remain broker-authoritative.")
     gross = None if mixed_currency else sum(abs(float(row["reporting_market_value"])) for row in valued)
     allocation = [
         {
@@ -576,6 +758,9 @@ def analytics(range_name: str = "3m") -> dict[str, Any]:
         "daily_pnl": daily,
         "latest_contributors": [] if mixed_currency else [dict(row) for row in contributors],
         "latest_report_date": latest_contributor_date,
+        "performance": performance,
+        "reconciliations": [dict(row) for row in reconciliations],
+        "recent_transactions": [dict(row) for row in transactions],
         "warnings": warnings,
     }
 

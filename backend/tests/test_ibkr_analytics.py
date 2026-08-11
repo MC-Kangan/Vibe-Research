@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import ibkr_analytics as analytics
 import position_service
 
@@ -13,8 +15,10 @@ def _current_root():
           <OpenPositions><OpenPosition accountId="U1234567" symbol="AAPL" description="Apple" assetCategory="STK"
             currency="USD" listingExchange="NASDAQ" position="10" avgCost="100" markPrice="110" positionValue="1100" fxRateToBase="1" unrealizedPnL="100" /></OpenPositions>
           <Trades><Trade accountId="U1234567" symbol="AAPL" description="Apple" assetCategory="STK" currency="USD" listingExchange="NASDAQ"
-            transactionID="T1" tradeDate="20260801" buySell="BUY" quantity="10" tradePrice="100" /></Trades>
-          <EquitySummaryByReportDateInBase accountId="U1234567" reportDate="20260807" total="1200" />
+            transactionID="T1" tradeDate="20260801" buySell="BUY" quantity="10" tradePrice="100"
+            proceeds="-1000" ibCommission="-1.25" taxes="-0.20" netCash="-1001.45" /></Trades>
+          <CashReport><CashReportCurrency accountId="U1234567" currency="BASE_SUMMARY" levelOfDetail="BaseCurrency" endingCash="100" /></CashReport>
+          <EquitySummaryByReportDateInBase accountId="U1234567" currency="USD" reportDate="20260807" cash="100" total="1200" />
         </FlexQueryResponse>
         """
     )
@@ -24,7 +28,7 @@ def _history_root():
     return position_service.ElementTree.fromstring(
         """
         <FlexQueryResponse><FlexStatements><FlexStatement accountId="U1234567" currency="USD" toDate="20260807">
-          <ChangeInNAV currency="USD" fromDate="20260807" toDate="20260807" startingValue="1000" endingValue="1200" mtm="200" />
+          <ChangeInNAV currency="USD" fromDate="20260807" toDate="20260807" startingValue="1000" endingValue="1200" mtm="200" depositsWithdrawals="0" />
           <MTMPerformanceSummaryUnderlying reportDate="20260807" symbol="AAPL" assetCategory="STK"
             prevCloseQuantity="10" prevClosePrice="105" closeQuantity="10" closePrice="110"
             transactionMtm="40" priorOpenMtm="10" commissions="1" total="49" />
@@ -48,7 +52,85 @@ def test_history_is_idempotent_and_exposes_analytics(monkeypatch, tmp_path: Path
     assert result["daily_pnl"][0]["pnl_amount"] == 200.0
     assert result["latest_contributors"][0]["symbol"] == "AAPL"
     assert result["latest_contributors"][0]["previous_close_quantity"] == 10.0
+    assert result["performance"]["flow_adjusted_return"] == pytest.approx(0.2)
+    assert result["performance"]["coverage"] == "complete"
+    assert result["reconciliations"][0]["status"] == "matched"
+    assert result["reconciliations"][0]["nav_difference"] == 0.0
+    assert result["recent_transactions"][0]["symbol"] == "AAPL"
     assert analytics.list_instruments("closed") == []
+
+
+def test_flow_adjusted_performance_accounts_for_deposits_and_drawdown(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
+    monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))
+    root = position_service.ElementTree.fromstring(
+        """
+        <FlexQueryResponse><FlexStatements>
+          <FlexStatement accountId="U1" currency="USD" toDate="20260806">
+            <ChangeInNAV currency="USD" toDate="20260806" startingValue="100" endingValue="120" mtm="10" depositsWithdrawals="10" />
+          </FlexStatement>
+          <FlexStatement accountId="U1" currency="USD" toDate="20260807">
+            <ChangeInNAV currency="USD" toDate="20260807" startingValue="120" endingValue="108" mtm="-12" depositsWithdrawals="0" />
+          </FlexStatement>
+        </FlexStatements></FlexQueryResponse>
+        """
+    )
+    analytics._insert_history(root)
+
+    performance = analytics.analytics("all")["performance"]
+    assert performance["method"] == "broker_flow_adjusted"
+    assert performance["flow_adjusted_return"] == pytest.approx(-0.01)
+    assert performance["max_drawdown"] == pytest.approx(-0.1)
+
+
+def test_performance_is_unavailable_without_explicit_cash_flow_coverage(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
+    monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))
+    analytics._insert_history(position_service.ElementTree.fromstring(
+        """<FlexQueryResponse><FlexStatement accountId="U1" currency="USD" toDate="20260807">
+        <ChangeInNAV currency="USD" toDate="20260807" startingValue="100" endingValue="101" mtm="1" />
+        </FlexStatement></FlexQueryResponse>"""
+    ))
+
+    performance = analytics.analytics("all")["performance"]
+    assert performance["method"] == "unavailable"
+    assert "deposits and withdrawals" in performance["reason"]
+
+
+def test_cash_withdrawal_does_not_create_a_false_drawdown(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
+    monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))
+    analytics._insert_history(position_service.ElementTree.fromstring(
+        """<FlexQueryResponse><FlexStatements>
+        <FlexStatement accountId="U1" currency="USD" toDate="20260806">
+          <ChangeInNAV currency="USD" toDate="20260806" startingValue="100" endingValue="110" mtm="10" depositsWithdrawals="0" />
+        </FlexStatement>
+        <FlexStatement accountId="U1" currency="USD" toDate="20260807">
+          <ChangeInNAV currency="USD" toDate="20260807" startingValue="110" endingValue="60" mtm="0" depositsWithdrawals="-50" />
+        </FlexStatement>
+        </FlexStatements></FlexQueryResponse>"""
+    ))
+
+    performance = analytics.analytics("all")["performance"]
+    assert performance["flow_adjusted_return"] == pytest.approx(0.1)
+    assert performance["max_drawdown"] == 0.0
+
+
+def test_reconciliation_warns_without_replacing_broker_positions(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
+    monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))
+    root = _current_root()
+    equity = root.find(".//EquitySummaryByReportDateInBase")
+    assert equity is not None
+    equity.attrib["total"] = "1300"
+    position_service.refresh_from_root(root)
+    analytics._insert_current_data(root)
+
+    result = analytics.analytics("all")
+    assert result["reconciliations"][0]["status"] == "warning"
+    assert result["reconciliations"][0]["nav_difference"] == -100.0
+    assert result["current"]["positions"][0]["quantity"] == 10.0
+    assert "broker-authoritative" in result["warnings"][0]
 
 
 def test_chart_applies_mapping_multiplier_and_range(monkeypatch, tmp_path: Path):
@@ -69,7 +151,48 @@ def test_chart_applies_mapping_multiplier_and_range(monkeypatch, tmp_path: Path)
     result = analytics.chart(key, "1m")
     assert result["provider_symbol"] == "AAPL"
     assert result["bars"][0]["close"] == 1.05
-    assert result["executions"][0]["price"] == 100.0
+    execution = result["executions"][0]
+    assert execution["price"] == 100.0
+    assert execution["gross_amount"] == -1000.0
+    assert execution["fees"] == -1.25
+    assert execution["taxes"] == -0.2
+    assert execution["net_cash"] == -1001.45
+    assert execution["description"] == "Apple"
+
+
+def test_initialize_extends_an_existing_trade_ledger(monkeypatch, tmp_path: Path):
+    database = tmp_path / "analytics.sqlite3"
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(database))
+    with analytics.sqlite3.connect(database) as db:
+        db.execute(
+            """CREATE TABLE ibkr_trades (
+              trade_key TEXT PRIMARY KEY, account_ref TEXT NOT NULL,
+              account_label TEXT NOT NULL, instrument_key TEXT NOT NULL,
+              symbol TEXT NOT NULL, name TEXT NOT NULL, asset_class TEXT NOT NULL,
+              currency TEXT NOT NULL, venue TEXT, occurred_at TEXT NOT NULL,
+              side TEXT NOT NULL, quantity REAL NOT NULL, price REAL,
+              fees REAL NOT NULL DEFAULT 0, net_cash REAL, external_id TEXT,
+              source TEXT NOT NULL DEFAULT 'ibkr-flex'
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE ibkr_daily_nav (
+              account_ref TEXT NOT NULL, report_date TEXT NOT NULL, currency TEXT NOT NULL,
+              starting_value REAL NOT NULL, ending_value REAL NOT NULL, mtm REAL NOT NULL,
+              realized REAL NOT NULL, change_in_unrealized REAL NOT NULL,
+              deposits_withdrawals REAL NOT NULL, commissions REAL NOT NULL,
+              dividends REAL NOT NULL, interest REAL NOT NULL,
+              PRIMARY KEY (account_ref, report_date, currency)
+            )"""
+        )
+
+    analytics.initialize()
+
+    with analytics.sqlite3.connect(database) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(ibkr_trades)")}
+        nav_columns = {row[1] for row in db.execute("PRAGMA table_info(ibkr_daily_nav)")}
+    assert {"gross_amount", "taxes", "description"} <= columns
+    assert "flow_data_available" in nav_columns
 
 
 def test_instruments_expose_exchange_aware_provider_symbols(monkeypatch, tmp_path: Path):

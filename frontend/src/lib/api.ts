@@ -128,10 +128,20 @@ export interface IbkrContributor {
   close_price: number; transaction_mtm: number; prior_open_mtm: number; commissions: number; total: number;
   is_total: number;
 }
+export interface IbkrPerformance {
+  method: "broker_flow_adjusted" | "unavailable"; coverage: "complete" | "unavailable";
+  flow_adjusted_return: number | null; max_drawdown: number | null; observations: number; reason: string | null;
+}
+export interface IbkrReconciliation {
+  reconciliation_key: string; account_ref: string; account_label: string; observed_at: string; currency: string;
+  broker_nav: number; calculated_nav: number; nav_difference: number; broker_cash: number | null;
+  calculated_cash: number; cash_difference: number | null; status: "matched" | "warning"; source: string;
+}
 export interface IbkrAnalytics {
   range: string; source: string; current: RealPositionSnapshot; allocation: IbkrAllocation[];
   gross_exposure: number | null; latest_nav: number | null; reporting_currency: string | null;
   daily_pnl: IbkrDailyPnl[]; latest_contributors: IbkrContributor[]; latest_report_date: string | null;
+  performance: IbkrPerformance; reconciliations: IbkrReconciliation[]; recent_transactions: IbkrExecution[];
   warnings: string[];
 }
 export interface IbkrRefreshStatus {
@@ -148,7 +158,9 @@ export interface IbkrInstrument {
 }
 export interface IbkrExecution {
   trade_key: string; occurred_at: string; side: "BUY" | "SELL"; quantity: number; price: number | null;
-  fees: number; net_cash: number | null; external_id: string | null;
+  fees: number; gross_amount: number; taxes: number; net_cash: number | null;
+  description: string | null; external_id: string | null; account_ref: string; account_label: string;
+  symbol: string; name: string; asset_class: string; currency: string; venue: string | null; source: string;
 }
 export interface IbkrChartBar {
   date: string; open: number | null; high: number | null; low: number | null; close: number | null;

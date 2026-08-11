@@ -35,3 +35,18 @@ test("AI position context requires exchange-aware provider symbols", () => {
   assert.match(source, /instrument\?\.provider_symbol/);
   assert.match(source, /交易所\$\{item\.venue/);
 });
+
+test("IBKR ledger stays automatic for the user", () => {
+  assert.match(source, /同步 IBKR 时会自动更新仓位、每日盈亏与交易点位，无需手工维护交易记录/);
+});
+
+test("reconciliation and broker activity stay passive and read-only", () => {
+  assert.match(source, /Broker reconciliation/);
+  assert.match(source, /<details[^>]*>.*自动同步的交易记录/s);
+  assert.doesNotMatch(source, /添加交易|编辑交易|删除交易/);
+});
+
+test("performance is labelled as flow-adjusted and exposes missing coverage", () => {
+  assert.match(source, /资金流调整回报/);
+  assert.match(source, /回报暂不可用/);
+});
