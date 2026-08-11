@@ -55,9 +55,19 @@ def test_cli_workflow_metadata_is_context_only():
     assert cli_meta["mode"] == "context_only" and cli_meta["tools_enabled"] is False
     assert cli_meta["web_search"] is False and cli_meta["private_knowledge"] is False
     prompt = profile.system_prompt("context", tools_available=False)
-    assert "选择最相关" not in prompt
-    assert "仅基于页面上下文" in prompt
+    assert "Select the 1-4 most relevant tools" not in prompt
+    assert "Use only the page context" in prompt
     assert "untrusted research data" in prompt
+
+
+def test_output_language_is_a_separate_runtime_instruction():
+    messages = [{"role": "system", "content": "Canonical English prompt"}, {"role": "user", "content": "data"}]
+    english = chat._localized_messages({"_locale": "en"}, messages)
+    chinese = chat._localized_messages({"_locale": "zh-CN"}, messages)
+
+    assert "Write all user-facing prose in English" in english[0]["content"]
+    assert "Write all user-facing prose in Simplified Chinese" in chinese[0]["content"]
+    assert messages[0]["content"] == "Canonical English prompt"
 
 
 def test_pick_trims_and_tolerates():
@@ -92,7 +102,7 @@ def test_bull_speaks_first_without_context():
     msgs = debate._build_messages("bull", "FACTS", [])
     assert len(msgs) == 2
     assert "FACTS" in msgs[0]["content"]
-    assert "开始你的陈述" in msgs[1]["content"]
+    assert "Begin your statement" in msgs[1]["content"]
 
 
 def test_bear_sees_only_bull():
@@ -110,8 +120,8 @@ def test_referee_sees_everyone():
 def test_referee_prompt_forbids_recommendation():
     """产品红线：主持人只能归纳分歧与验证路径，不能给结论倾向或买卖建议。"""
     p = debate._ROLE_PROMPTS["referee"]
-    assert "买卖建议" in p and "目标价" in p
-    assert "验证清单" in p and "分歧" in p
+    assert "recommendation" in p and "target price" in p
+    assert "Verification checklist" in p and "disagreements" in p
 
 
 def test_dossier_spec_marks_rate_limited_sources_serial():
@@ -141,7 +151,7 @@ def test_structurally_empty_counts_as_gap(monkeypatch):
                         lambda name, args: {"period": "近5年", "metrics": {}}
                         if name == "query_valuation_percentile" else {"v": 1})
     d = debate.build_dossier("600519")
-    assert "估值历史分位" in d["missing"]
+    assert "Historical valuation percentile" in d["missing"]
     assert all(s["title"] != "估值历史分位" for s in d["sections"])
 
 
@@ -152,11 +162,11 @@ def test_legitimately_empty_section_is_not_a_gap(monkeypatch):
                         lambda name, args: {"history": [], "upcoming": []}
                         if name == "query_lockup" else {"v": 1})
     d = debate.build_dossier("600519")
-    assert "限售解禁" not in d["missing"]
-    hit = next(s for s in d["sections"] if s["title"] == "限售解禁")
+    assert "Lock-up expirations" not in d["missing"]
+    hit = next(s for s in d["sections"] if s["title"] == "Lock-up expirations")
     assert hit["data"] == debate.NO_RECORD
     # 说明要原样出现在底稿里（不被 json.dumps 套一层引号）
-    assert "未取到任何记录" in debate.dossier_text(d)
+    assert "No records were returned" in debate.dossier_text(d)
 
 
 def test_dossier_text_reports_gaps(monkeypatch):
@@ -166,12 +176,12 @@ def test_dossier_text_reports_gaps(monkeypatch):
     monkeypatch.setattr(tools, "exec_tool", fake)
     d = debate.build_dossier("600519")
     # 空 = 数据源出问题的那些项进缺口；空可能合法的那些项进底稿但标「未取到记录」
-    assert "估值历史分位" in d["missing"] and "板块与概念归属" in d["missing"]
+    assert "Historical valuation percentile" in d["missing"] and "Sector and theme classification" in d["missing"]
     assert "限售解禁" not in d["missing"]
     real = [s["tool"] for s in d["sections"] if not isinstance(s["data"], str)]
     assert real == ["query_quote"]
     text = debate.dossier_text(d)
-    assert "数据缺口" in text and "不得臆测" in text
+    assert "Data gaps" in text and "must not be inferred" in text
 
 
 def test_dossier_preserves_spec_order(monkeypatch):
@@ -188,7 +198,7 @@ def test_us_dossier_uses_market_data_sec_and_trial_sources(monkeypatch):
         "query_market_snapshot", "query_market_bars", "query_global_stock",
         "query_us_sec_facts", "query_us_filings", "query_market_news", "query_market_earnings",
     ]
-    assert any("长期一致预期" in gap for gap in dossier["missing"])
+    assert any("Long-term analyst consensus" in gap for gap in dossier["missing"])
 
 
 def test_european_dossier_reports_missing_fundamentals(monkeypatch):
@@ -197,8 +207,8 @@ def test_european_dossier_reports_missing_fundamentals(monkeypatch):
     assert [section["tool"] for section in dossier["sections"]] == [
         "query_market_snapshot", "query_market_bars", "query_market_news", "query_market_earnings",
     ]
-    assert any("财务与估值" in gap for gap in dossier["missing"])
-    assert any("监管文件" in gap for gap in dossier["missing"])
+    assert any("Financial and valuation" in gap for gap in dossier["missing"])
+    assert any("announcements and filings" in gap for gap in dossier["missing"])
 
 
 def test_market_bar_dossier_keeps_recent_history_and_full_period_summary():
@@ -250,27 +260,27 @@ def test_debate_aborts_when_no_data(monkeypatch):
 
 def test_no_record_wording_does_not_claim_certainty(monkeypatch):
     """空既可能是真没有、也可能是数据源挂了，代码分不出来——措辞不能断言「确实没有」。"""
-    assert "可能" in debate.NO_RECORD and "不得据此推断" in debate.NO_RECORD
+    assert "may not exist" in debate.NO_RECORD and "do not infer" in debate.NO_RECORD
 
 
 # ---- 反思 ----
 
 def test_reflection_rejects_empty():
     evs = list(reflection.run_reflection_stream(_LLM, "   "))
-    assert evs == [{"type": "error", "message": "没有可反思的内容"}]
+    assert evs == [{"type": "error", "message": "There is no content to audit."}]
 
 
 def test_reflection_truncates_long_source(monkeypatch):
     monkeypatch.setattr(chat, "_call_llm_stream", lambda *a, **k: None)
     monkeypatch.setattr(chat, "_iter_sse_deltas", lambda resp: iter([{"content": "ok"}]))
     evs = list(reflection.run_reflection_stream(_LLM, "字" * (reflection.MAX_SOURCE_CHARS + 500)))
-    assert evs[0]["type"] == "status" and "截取" in evs[0]["message"]
+    assert evs[0]["type"] == "status" and "first" in evs[0]["message"]
     assert evs[-1]["type"] == "done" and evs[-1]["truncated"] is True
 
 
 def test_reflect_prompt_forbids_own_judgement():
-    assert "买卖建议" in reflection.REFLECT_PROMPT
-    assert "验证清单" in reflection.REFLECT_PROMPT
+    assert "recommendation" in reflection.REFLECT_PROMPT
+    assert "Verification checklist" in reflection.REFLECT_PROMPT
 
 
 # ---- 路由校验 ----

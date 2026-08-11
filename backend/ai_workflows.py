@@ -39,7 +39,8 @@ Hard rules:
   securities preserve provider symbols such as SMH.L, VOD.L or SAP.DE.
 - Provide information organisation and multi-perspective analysis only: no target
   prices, return promises or personalised order instructions.
-- Keep the answer concise and use Chinese unless the user asks otherwise.
+- Keep the answer concise. The runtime output-language instruction determines the
+  response language; do not infer it from the language of the supplied data.
 """
 
 
@@ -53,17 +54,17 @@ class WorkflowProfile:
     max_rounds: int = 4
 
     def system_prompt(self, context: str, tools_available: bool = True) -> str:
-        enabled = "、".join(self.tool_names) if tools_available and self.tool_names else "无（仅使用页面上下文）"
+        enabled = ", ".join(self.tool_names) if tools_available and self.tool_names else "None (page context only)"
         execution_rule = (
-            "按问题选择最相关的 1-4 个工具；不要为了展示能力而批量调用。\n"
+            "Select the 1-4 most relevant tools for the question; do not call tools merely to demonstrate capability.\n"
             if tools_available and self.tool_names
-            else "当前提供方不会收到工具调用能力；仅基于页面上下文回答，不得声称已自行查询新数据。\n"
+            else "This provider has no tool-calling capability. Use only the page context and do not claim to have fetched new data.\n"
         )
         return (
             f"{BASE_PROMPT}\n\n"
-            f"【当前工作流】{self.label}\n{self.instructions}\n\n"
-            f"【已启用工具】{enabled}\n{execution_rule}\n"
-            f"【当前页面上下文】\n{context or '（无）'}"
+            f"Current workflow: {self.label}\n{self.instructions}\n\n"
+            f"Enabled tools: {enabled}\n{execution_rule}\n"
+            f"Current page context:\n{context or '(none)'}"
         )
 
     def public_metadata(self, provider: str) -> dict:
@@ -109,43 +110,43 @@ _INTELLIGENCE = (
 
 WORKFLOWS: dict[str, WorkflowProfile] = {
     "general": WorkflowProfile(
-        "general", "通用研究", "基于当前页面并按需调用 Vibe 数据工具",
+        "general", "General research", "Use the current page and relevant Vibe data tools",
         "Answer the user's research question using the page context and the smallest useful set of enabled tools.\n" + ANALYSIS_FRAMEWORK,
         _ALL_RESEARCH,
         5,
     ),
     "stock": WorkflowProfile(
-        "stock", "个股研究", "按标的市场调用行情、基本面与事件工具",
+        "stock", "Instrument research", "Use market-appropriate price, fundamental and event tools",
         "Focus on the named instrument. Resolve its market first, keep the exchange-qualified symbol, and never mix market-specific datasets.\n" + ANALYSIS_FRAMEWORK,
         _COMPANY_RESEARCH,
         5,
     ),
     "portfolio": WorkflowProfile(
-        "portfolio", "组合分析", "结合持仓、目标与风险偏好检查组合结构",
+        "portfolio", "Portfolio analysis", "Review portfolio structure against holdings, goals and risk preferences",
         "Treat investment goals and risk preferences in the page context as primary constraints. Analyse concentration, currency, sector and evidence quality; do not issue orders. Query prices using each position's exchange-qualified provider symbol.",
         _PORTFOLIO_RESEARCH,
         4,
     ),
     "daily_review": WorkflowProfile(
-        "daily_review", "每日复盘", "整理跨市场表现、情绪与重要变化",
+        "daily_review", "Daily review", "Organise cross-market performance, sentiment and important changes",
         "Summarise what changed across the markets in the page context. Separate observed facts from interpretation and highlight stale or missing timestamps.",
         (*MARKET, "query_crypto_snapshot", "query_crypto_context"),
         3,
     ),
     "intelligence": WorkflowProfile(
-        "intelligence", "资讯分析", "提炼事件、来源与待验证影响路径",
+        "intelligence", "Intelligence analysis", "Extract events, sources and impact paths that need verification",
         "Prioritise recency, source and event facts. Distinguish confirmed company disclosures from news reporting and avoid turning headlines into predictions.",
         _INTELLIGENCE,
         3,
     ),
     "watchlist": WorkflowProfile(
-        "watchlist", "自选股分析", "跨标的比较并保留各自市场口径",
+        "watchlist", "Watchlist analysis", "Compare instruments while preserving each market's conventions",
         "Compare only metrics with compatible definitions and dates. Group instruments by market or theme before drawing cross-name observations.\n" + ANALYSIS_FRAMEWORK,
         _COMPANY_RESEARCH,
         5,
     ),
     "sector": WorkflowProfile(
-        "sector", "板块研究", "梳理产业链、板块数据与研究缺口",
+        "sector", "Sector research", "Map value chains, sector evidence and research gaps",
         "Focus on industry structure, value-chain links, sector evidence and missing verification. Do not invent companies or bottlenecks from model memory.",
         SECTOR,
         4,
@@ -157,7 +158,7 @@ def get_workflow(workflow_id: str) -> WorkflowProfile:
     try:
         return WORKFLOWS[workflow_id]
     except KeyError as exc:
-        raise ValueError(f"未知 AI 工作流：{workflow_id}") from exc
+        raise ValueError(f"Unknown AI workflow: {workflow_id}") from exc
 
 
 def tool_definitions(profile: WorkflowProfile) -> list[dict]:
@@ -170,7 +171,7 @@ def validate_registry() -> None:
     for profile in WORKFLOWS.values():
         unknown = set(profile.tool_names) - known
         if unknown:
-            raise RuntimeError(f"AI 工作流 {profile.id} 引用了未知工具：{sorted(unknown)}")
+            raise RuntimeError(f"AI workflow {profile.id} references unknown tools: {sorted(unknown)}")
 
 
 validate_registry()

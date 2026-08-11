@@ -5,6 +5,7 @@ import { storageSet, storageRemove } from "@/lib/storage";
 import { ApiError, authHeaders, notifyAuthInvalidated } from "./api";
 import { isCliProvider, type ProviderId } from "./ai-models";
 import type { AiRuntimeMetadata, AiWorkflowId } from "./ai-workflows";
+import { getLocale, translate } from "./i18n";
 
 export interface LlmConfig {
   provider: ProviderId;
@@ -63,19 +64,20 @@ export interface ChatHandlers {
 // signal：调用方可传 AbortController.signal，用户关面板/换问题时中止请求（省订阅/API 额度）。
 export async function chatStream(workflow: AiWorkflowId, messages: ChatMsg[], context: string, handlers: ChatHandlers = {}, signal?: AbortSignal): Promise<ChatResult> {
   const llm = loadLlm();
-  if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
+  const locale = getLocale();
+  if (!llm) throw new ApiError(translate(locale, "AI is not configured. Open AI Setup first.", "尚未接入 AI，请先在「接入 AI」里配置"), 400);
 
   let resp: Response;
   try {
     resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ workflow, messages, context, llm }),
+      body: JSON.stringify({ workflow, messages, context, llm, locale }),
       signal,
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e; // 主动中止，原样抛给调用方
-    throw new ApiError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
+    throw new ApiError(translate(locale, "Cannot reach the backend. Start it with uvicorn app:app --port 8900.", "连接不到后端，请先启动 backend（uvicorn app:app --port 8900）"), 0);
   }
   // 配置错误（缺 key / 未装 CLI）在流开始前以 HTTP 400 返回
   if (!resp.ok) {
@@ -83,11 +85,11 @@ export async function chatStream(workflow: AiWorkflowId, messages: ChatMsg[], co
     try { body = await resp.json(); } catch { /* ignore */ }
     if (resp.status === 401) {
       notifyAuthInvalidated();
-      throw new ApiError("登录已过期或访问密钥无效，请重新登录", 401);
+      throw new ApiError(translate(locale, "Your session expired or access key is invalid. Sign in again.", "登录已过期或访问密钥无效，请重新登录"), 401);
     }
     throw new ApiError(body?.detail || `HTTP ${resp.status}`, resp.status);
   }
-  if (!resp.body) throw new ApiError("后端无响应流", 502);
+  if (!resp.body) throw new ApiError(translate(locale, "The backend returned no response stream.", "后端无响应流"), 502);
 
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();

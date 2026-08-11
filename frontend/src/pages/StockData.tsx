@@ -21,9 +21,10 @@ import {
 } from "@/lib/api";
 import { isUSSymbol, stockDataRoute } from "@/lib/market-symbols";
 import { cn } from "@/lib/utils";
+import { getLocale, useLocale } from "@/lib/i18n";
 
 // 金额格式化（后端资金单位：元 / 万元）
-const yi = (v: number) => `${(v / 1e8).toFixed(2)} 亿`;
+const yi = (v: number) => `${(v / 1e8).toFixed(2)} ${getLocale() === "en" ? "hundred million CNY" : "亿"}`;
 
 const fmt = (v: number | null | undefined, suffix = "") =>
   v === null || v === undefined ? "—" : `${v}${suffix}`;
@@ -33,8 +34,8 @@ const pctColor = (p: number | null | undefined) =>
   p != null && p > 0 ? "text-success" : p != null && p < 0 ? "text-danger" : "text-muted-foreground";
 const pctStr = (p: number | null | undefined) => (p == null ? "—" : `${p > 0 ? "+" : ""}${p}%`);
 // 美/港股金额（原生币种）
-const curOf = (market: string) => (market === "HK" ? "港元" : market === "KR" ? "韩元" : "美元");
-const mktName = (m: string) => (m === "HK" ? "港股" : m === "KR" ? "韩股" : "美股");
+const curOf = (market: string) => getLocale() === "en" ? (market === "HK" ? "HKD" : market === "KR" ? "KRW" : "USD") : (market === "HK" ? "港元" : market === "KR" ? "韩元" : "美元");
+const mktName = (m: string) => getLocale() === "en" ? (m === "HK" ? "Hong Kong stock" : m === "KR" ? "Korean stock" : "US stock") : (m === "HK" ? "港股" : m === "KR" ? "韩股" : "美股");
 const bigMoney = (v: number | null, market: string) =>
   v == null ? "—" : v >= 1e12 ? `${(v / 1e12).toFixed(2)} 万亿${curOf(market)}` : `${(v / 1e8).toFixed(0)} 亿${curOf(market)}`;
 const round2 = (v: number | null | undefined, suffix = "") =>
@@ -57,16 +58,17 @@ function Metric({ k, v, sub }: { k: string; v: string; sub?: string }) {
 
 // 估值历史分位带（理杏仁式）：绿=低估区 / 灰=合理区 / 红=高估区；只给位置，不划买卖。
 function ValBand({ label, m }: { label: string; m: ValMetric }) {
+  const { tr } = useLocale();
   const span = Math.max(m.max - m.min, 1e-6);
   const pos = (v: number) => Math.min(100, Math.max(0, ((v - m.min) / span) * 100));
   const p20 = pos(m.p20), p80 = pos(m.p80), cur = pos(m.current);
   const zoneColor = m.percentile < 20 ? "text-success" : m.percentile > 80 ? "text-danger" : "text-muted-foreground";
-  const zoneLabel = m.percentile < 20 ? "低估区" : m.percentile > 80 ? "高估区" : "合理区";
+  const zoneLabel = m.percentile < 20 ? tr("Low zone", "低估区") : m.percentile > 80 ? tr("High zone", "高估区") : tr("Middle zone", "合理区");
   return (
     <div>
       <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-1 text-sm">
-        <span className="font-medium">{label} <span className="text-xs text-muted-foreground/60">{m.n} 点</span></span>
-        <span className="text-muted-foreground">当前 <b className="font-mono text-foreground">{m.current}</b> · 近5年 <b className={cn("font-mono", zoneColor)}>{m.percentile}%</b> 分位（<span className={zoneColor}>{zoneLabel}</span>）</span>
+        <span className="font-medium">{label} <span className="text-xs text-muted-foreground/60">{m.n} {tr("points", "点")}</span></span>
+        <span className="text-muted-foreground">{tr("Current", "当前")} <b className="font-mono text-foreground">{m.current}</b> · {tr("5-year percentile", "近5年分位")} <b className={cn("font-mono", zoneColor)}>{m.percentile}%</b> {tr("(", "（")}<span className={zoneColor}>{zoneLabel}</span>{tr(")", "）")}</span>
       </div>
       <div className="relative h-2.5 w-full overflow-hidden rounded-full">
         <div className="absolute inset-0 flex">
@@ -77,13 +79,14 @@ function ValBand({ label, m }: { label: string; m: ValMetric }) {
         <div className="absolute top-1/2 h-4 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded bg-foreground shadow" style={{ left: `${cur}%` }} />
       </div>
       <div className="mt-1 flex justify-between font-mono text-[10px] text-muted-foreground/60">
-        <span>低 {m.min}</span><span>20% {m.p20}</span><span>中 {m.p50}</span><span>80% {m.p80}</span><span>高 {m.max}</span>
+        <span>{tr("Low", "低")} {m.min}</span><span>20% {m.p20}</span><span>{tr("Median", "中")} {m.p50}</span><span>80% {m.p80}</span><span>{tr("High", "高")} {m.max}</span>
       </div>
     </div>
   );
 }
 
 export function StockData() {
+  const { locale, tr } = useLocale();
   const [assetType, setAssetType] = useState<"equity" | "crypto">("equity");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -120,7 +123,7 @@ export function StockData() {
 
   const run = async () => {
     const c = code.trim().toUpperCase();
-    if (!c) { setErr("请输入代码"); return; }
+    if (!c) { setErr(tr("Enter a symbol", "请输入代码")); return; }
     const rid = ++runIdRef.current;
     setLoading(true); setErr(null); setDepNote(null); setVal(null); setReports([]); setNews([]); setPctl(null); setFin(null); setAnns([]);
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
@@ -138,10 +141,10 @@ export function StockData() {
           setCode(snapshot.instrument.symbol);
           setMarketSnapshot(snapshot);
           setMarketHistory(history);
-          setMarketSourceGaps(["传统公司基本面与估值不适用", "链上资金流与代币解锁数据尚未接入"]);
+          setMarketSourceGaps(locale === "en" ? ["Traditional company fundamentals and valuation do not apply", "On-chain flows and token unlock data are not integrated"] : ["传统公司基本面与估值不适用", "链上资金流与代币解锁数据尚未接入"]);
         }
       } catch (e) {
-        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : "查询失败");
+        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
       } finally {
         if (rid === runIdRef.current) setLoading(false);
       }
@@ -154,14 +157,14 @@ export function StockData() {
     if (route === "market") {
       const noteGap = (label: string) => (error: unknown) => {
         if (rid !== runIdRef.current) return;
-        const detail = error instanceof ApiError ? error.message : "数据源当前不可达";
+        const detail = error instanceof ApiError ? error.message : tr("Data source is currently unavailable", "数据源当前不可达");
         setMarketSourceGaps((current) => [...current, `${label}：${detail}`]);
       };
-      api.marketNews(c).then((data) => { if (rid === runIdRef.current) setMarketNews(data); }).catch(noteGap("新闻"));
+      api.marketNews(c).then((data) => { if (rid === runIdRef.current) setMarketNews(data); }).catch(noteGap(tr("News", "新闻")));
       api.marketEarnings(c).then((data) => { if (rid === runIdRef.current) setMarketEarnings(data); }).catch(noteGap("Earnings"));
       if (isUSSymbol(c)) {
-        api.marketFilings(c).then((data) => { if (rid === runIdRef.current) setMarketFilings(data); }).catch(noteGap("SEC 文件"));
-        api.marketSecFacts(c).then((data) => { if (rid === runIdRef.current) setMarketSecFacts(data); }).catch(noteGap("SEC 基本面"));
+        api.marketFilings(c).then((data) => { if (rid === runIdRef.current) setMarketFilings(data); }).catch(noteGap(tr("SEC filings", "SEC 文件")));
+        api.marketSecFacts(c).then((data) => { if (rid === runIdRef.current) setMarketSecFacts(data); }).catch(noteGap(tr("SEC fundamentals", "SEC 基本面")));
       }
       try {
         const [snapshot, history, supplemental] = await Promise.all([
@@ -175,7 +178,7 @@ export function StockData() {
           setGStock(supplemental);
         }
       } catch (e) {
-        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : "查询失败");
+        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
       } finally {
         if (rid === runIdRef.current) setLoading(false);
       }
@@ -190,7 +193,7 @@ export function StockData() {
         const g = await api.globalStock(c);
         if (rid === runIdRef.current) setGStock(g);
       } catch (e) {
-        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : "查询失败");
+        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
       } finally {
         if (rid === runIdRef.current) setLoading(false);
       }
@@ -252,51 +255,51 @@ export function StockData() {
       }
     } catch (e) {
       if (rid !== runIdRef.current) return;
-      setErr(e instanceof ApiError ? e.message : "查询失败");
+      setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
     } finally {
       if (rid === runIdRef.current) setLoading(false);
     }
   };
 
   const metrics = val ? [
-    { k: "现价", v: fmt(val.price) },
+    { k: tr("Price", "现价"), v: fmt(val.price) },
     { k: "PE(TTM)", v: fmt(val.pe_ttm) },
     { k: "PB", v: fmt(val.pb) },
-    { k: "总市值", v: fmt(val.mcap_yi, " 亿") },
+    { k: tr("Market cap", "总市值"), v: fmt(val.mcap_yi, tr(" hundred million CNY", " 亿")) },
     { k: "26E EPS", v: fmt(val.eps_26e) },
-    { k: "前向PE", v: fmt(val.pe_26e) },
+    { k: tr("Forward PE", "前向PE"), v: fmt(val.pe_26e) },
     { k: "PEG", v: fmt(val.peg) },
-    { k: "消化年数", v: fmt(val.digest_years, " 年") },
+    { k: tr("Years to digest", "消化年数"), v: fmt(val.digest_years, tr(" years", " 年")) },
   ] : [];
 
   const aiContext = val
-    ? `个股：${val.name}（${val.code}）\n现价 ${val.price} · PE(TTM) ${val.pe_ttm} · PB ${val.pb} · 市值 ${val.mcap_yi}亿\n` +
-      `26E EPS ${val.eps_26e ?? "—"} · 前向PE ${val.pe_26e ?? "—"} · PEG ${val.peg ?? "—"} · 消化 ${val.digest_years ?? "—"}年 · 机构覆盖 ${val.analyst_count} 家\n` +
-      (pctl?.metrics.pe_ttm ? `估值历史分位(近5年)：PE-TTM 处于 ${pctl.metrics.pe_ttm.percentile}% 分位、PB 处于 ${pctl.metrics.pb?.percentile ?? "—"}% 分位\n` : "") +
-      (fin?.revenue ? `财务(${fin.period ?? "—"})：营收 ${fin.revenue}(同比${fin.revenue_yoy ?? "—"})、净利 ${fin.net_profit ?? "—"}(同比${fin.net_profit_yoy ?? "—"})、ROE ${fin.roe ?? "—"}、毛利率 ${fin.gross_margin ?? "—"}\n` : "") +
-      (anns.length ? `近期公告：${anns.slice(0, 5).map((a) => a.title.replace(/^[^:：]*[:：]/, "")).join("；")}\n` : "") +
-      `近期研报：${reports.slice(0, 5).map((r) => r.title).join("；") || "无"}`
-    : "还没查询个股。输入 A 股、美股或欧洲股票代码后可让 AI 基于已接入的客观数据分析。";
+    ? `Stock: ${val.name} (${val.code})\nPrice ${val.price}; PE (TTM) ${val.pe_ttm}; PB ${val.pb}; market cap ${val.mcap_yi} hundred million CNY\n` +
+      `26E EPS ${val.eps_26e ?? "—"}; forward PE ${val.pe_26e ?? "—"}; PEG ${val.peg ?? "—"}; valuation digestion ${val.digest_years ?? "—"} years; ${val.analyst_count} institutions covering\n` +
+      (pctl?.metrics.pe_ttm ? `Five-year valuation percentiles: PE-TTM ${pctl.metrics.pe_ttm.percentile}%; PB ${pctl.metrics.pb?.percentile ?? "—"}%\n` : "") +
+      (fin?.revenue ? `Financials (${fin.period ?? "—"}): revenue ${fin.revenue} (YoY ${fin.revenue_yoy ?? "—"}); net income ${fin.net_profit ?? "—"} (YoY ${fin.net_profit_yoy ?? "—"}); ROE ${fin.roe ?? "—"}; gross margin ${fin.gross_margin ?? "—"}\n` : "") +
+      (anns.length ? `Recent announcements: ${anns.slice(0, 5).map((a) => a.title.replace(/^[^:：]*[:：]/, "")).join("; ")}\n` : "") +
+      `Recent research reports: ${reports.slice(0, 5).map((r) => r.title).join("; ") || "none"}`
+    : "No stock has been queried. Enter a Chinese, US, or European stock symbol to analyze the integrated objective data.";
 
   const gAiContext = gstock
-    ? `个股（${mktName(gstock.market)}）：${gstock.name}（${gstock.code}）\n` +
-      `现价 ${gstock.quote.price ?? "—"} · 涨跌 ${pctStr(gstock.quote.change_pct)} · 总市值 ${bigMoney(gstock.quote.mcap, gstock.market)}\n` +
+    ? `Stock (${gstock.market}): ${gstock.name} (${gstock.code})\n` +
+      `Price ${gstock.quote.price ?? "—"}; change ${pctStr(gstock.quote.change_pct)}; market cap ${bigMoney(gstock.quote.mcap, gstock.market)}\n` +
       (gstock.metrics
-        ? `财务(${gstock.metrics.report_date})：营收 ${bigMoney(gstock.metrics.revenue, gstock.market)}(同比${round2(gstock.metrics.revenue_yoy, "%")})、归母净利 ${bigMoney(gstock.metrics.net_profit, gstock.market)}、EPS ${gstock.metrics.eps ?? "—"}、ROE ${round2(gstock.metrics.roe, "%")}、毛利率 ${round2(gstock.metrics.gross_margin, "%")}、净利率 ${round2(gstock.metrics.net_margin, "%")}、资产负债率 ${round2(gstock.metrics.debt_ratio, "%")}`
+        ? `Financials (${gstock.metrics.report_date}): revenue ${bigMoney(gstock.metrics.revenue, gstock.market)} (YoY ${round2(gstock.metrics.revenue_yoy, "%")}); net income ${bigMoney(gstock.metrics.net_profit, gstock.market)}; EPS ${gstock.metrics.eps ?? "—"}; ROE ${round2(gstock.metrics.roe, "%")}; gross margin ${round2(gstock.metrics.gross_margin, "%")}; net margin ${round2(gstock.metrics.net_margin, "%")}; debt ratio ${round2(gstock.metrics.debt_ratio, "%")}`
         : "")
     : "";
   const marketAiContext = marketSnapshot && marketHistory
-    ? `${marketSnapshot.instrument.asset_type === "crypto" ? "加密货币" : "个股"}：${marketSnapshot.instrument.name}（${marketSnapshot.instrument.provider_symbol}）\n` +
-      `交易所 ${marketSnapshot.instrument.exchange} · 现价 ${marketSnapshot.quote.price ?? "—"} ${marketSnapshot.quote.currency} · 涨跌 ${pctStr(marketSnapshot.quote.change_pct)}\n` +
-      `近一年日线共 ${marketHistory.bars.length} 条；数据源 ${marketSnapshot.quote.source}。\n` +
-      (gstock?.metrics ? gAiContext : "基本面、公告、监管文件与个股新闻数据尚未接齐，分析时必须明确这些缺口。")
+    ? `${marketSnapshot.instrument.asset_type === "crypto" ? "Cryptocurrency" : "Stock"}: ${marketSnapshot.instrument.name} (${marketSnapshot.instrument.provider_symbol})\n` +
+      `Exchange ${marketSnapshot.instrument.exchange}; price ${marketSnapshot.quote.price ?? "—"} ${marketSnapshot.quote.currency}; change ${pctStr(marketSnapshot.quote.change_pct)}\n` +
+      `${marketHistory.bars.length} daily bars over the past year; source ${marketSnapshot.quote.source}.\n` +
+      (gstock?.metrics ? gAiContext : "Fundamentals, announcements, filings, and company news are incomplete. Explicitly disclose these gaps in the analysis.")
     : "";
 
   return (
     <div>
       <PageHeader
-        title="标的数据"
-        subtitle="股票与加密货币共享行情、图表和兼容技能；专项数据按能力明确区分"
+        title={tr("Instrument data", "标的数据")}
+        subtitle={tr("Stocks and crypto share prices, charts, and compatible analysis skills; specialized data is clearly separated by availability", "股票与加密货币共享行情、图表和兼容技能；专项数据按能力明确区分")}
         actions={(val || gstock || marketSnapshot) && (
           <div className="flex flex-wrap gap-2"><AskAiButton
             workflow="stock"
@@ -305,16 +308,16 @@ export function StockData() {
             // ⚠️ 用**已解析结果**的代码，不能用输入框的 code——后者一边打字一边变，
             // 而 val/gstock 和 AI 上下文仍描述上一只票，会把旧上下文存到新代码名下。
             scopeKey={marketSnapshot ? `m:${marketSnapshot.instrument.provider_symbol}` : gstock ? `g:${gstock.code}` : val?.code}
-            label="让 AI 读这些数据"
+            label={tr("Ask AI to analyze this data", "让 AI 读这些数据")}
             suggestions={(gstock || marketSnapshot)
-              ? (marketSnapshot?.instrument.asset_type === "crypto" ? ["价格结构有什么特征", "市场环境如何", "有哪些数据缺口"] : ["这家公司基本面怎么样", "盈利能力如何", "有什么风险"])
-              : ["这个估值贵不贵", "机构一致预期怎么看", "近期研报的分歧点", "有什么风险"]}
-          /><Link to={`/debate?mode=team&asset_type=${assetType}&code=${encodeURIComponent(marketSnapshot?.instrument.provider_symbol || gstock?.code || val?.code || code)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-2 text-sm text-muted-foreground hover:text-primary"><Users className="h-4 w-4" />研究团队</Link></div>
+              ? (marketSnapshot?.instrument.asset_type === "crypto" ? (locale === "en" ? ["What characterizes the price structure?", "What is the market environment?", "What data is missing?"] : ["价格结构有什么特征", "市场环境如何", "有哪些数据缺口"]) : (locale === "en" ? ["How are the fundamentals?", "How is profitability?", "What are the risks?"] : ["这家公司基本面怎么样", "盈利能力如何", "有什么风险"]))
+              : (locale === "en" ? ["How demanding is the valuation?", "What does consensus imply?", "Where do recent reports disagree?", "What are the risks?"] : ["这个估值贵不贵", "机构一致预期怎么看", "近期研报的分歧点", "有什么风险"])}
+          /><Link to={`/debate?mode=team&asset_type=${assetType}&code=${encodeURIComponent(marketSnapshot?.instrument.provider_symbol || gstock?.code || val?.code || code)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-3 py-2 text-sm text-muted-foreground hover:text-primary"><Users className="h-4 w-4" />{tr("Research team", "研究团队")}</Link></div>
         )}
       />
 
       <div className="mb-3 flex w-fit gap-1 rounded-lg border border-border/60 bg-muted/20 p-1">
-        {([['equity', '股票'], ['crypto', '加密货币']] as const).map(([value, label]) => <button key={value} onClick={() => { setAssetType(value); setCode(""); setErr(null); setMarketSnapshot(null); setMarketHistory(null); }} className={`rounded-md px-4 py-1.5 text-sm ${assetType === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>{label}</button>)}
+        {([['equity', tr('Stocks', '股票')], ['crypto', tr('Crypto', '加密货币')]] as const).map(([value, label]) => <button key={value} onClick={() => { setAssetType(value); setCode(""); setErr(null); setMarketSnapshot(null); setMarketHistory(null); }} className={`rounded-md px-4 py-1.5 text-sm ${assetType === value ? "bg-background text-primary shadow-sm" : "text-muted-foreground"}`}>{label}</button>)}
       </div>
 
       {/* 查询框 */}
@@ -323,8 +326,8 @@ export function StockData() {
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/[^a-zA-Z0-9.-]/g, "").toUpperCase().slice(0, 24))}
           onKeyDown={(e) => e.key === "Enter" && run()}
-          placeholder={assetType === "crypto" ? "BTC / ETH / SOL" : "A股、美股（AAPL）或欧洲代码（VOD.L / SAP.DE）"}
-          aria-label={assetType === "crypto" ? "加密货币代码" : "股票代码"}
+          placeholder={assetType === "crypto" ? "BTC / ETH / SOL" : tr("Chinese, US (AAPL), or European symbol (VOD.L / SAP.DE)", "A股、美股（AAPL）或欧洲代码（VOD.L / SAP.DE）")}
+          aria-label={assetType === "crypto" ? tr("Cryptocurrency symbol", "加密货币代码") : tr("Stock symbol", "股票代码")}
           className="min-w-0 flex-1 basis-64 rounded-lg border border-border bg-black/20 px-3 py-2 text-sm outline-none focus:border-primary/50"
         />
         <button
@@ -333,7 +336,7 @@ export function StockData() {
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-4 py-2 text-sm font-medium text-primary shadow-glow hover:bg-primary/25 disabled:opacity-50"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-          查询
+          {tr("Search", "查询")}
         </button>
       </div>
 
@@ -367,14 +370,14 @@ export function StockData() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { k: "现价", v: fmt(gstock.quote.price), cls: pctColor(gstock.quote.change_pct) },
-                { k: "涨跌幅", v: pctStr(gstock.quote.change_pct), cls: pctColor(gstock.quote.change_pct) },
-                { k: "总市值", v: bigMoney(gstock.quote.mcap, gstock.market), cls: "" },
-                { k: "成交额", v: bigMoney(gstock.quote.amount, gstock.market), cls: "" },
-                { k: "开盘", v: fmt(gstock.quote.open), cls: "" },
-                { k: "最高", v: fmt(gstock.quote.high), cls: "" },
-                { k: "最低", v: fmt(gstock.quote.low), cls: "" },
-                { k: "昨收", v: fmt(gstock.quote.prev_close), cls: "" },
+                { k: tr("Price", "现价"), v: fmt(gstock.quote.price), cls: pctColor(gstock.quote.change_pct) },
+                { k: tr("Change", "涨跌幅"), v: pctStr(gstock.quote.change_pct), cls: pctColor(gstock.quote.change_pct) },
+                { k: tr("Market cap", "总市值"), v: bigMoney(gstock.quote.mcap, gstock.market), cls: "" },
+                { k: tr("Turnover", "成交额"), v: bigMoney(gstock.quote.amount, gstock.market), cls: "" },
+                { k: tr("Open", "开盘"), v: fmt(gstock.quote.open), cls: "" },
+                { k: tr("High", "最高"), v: fmt(gstock.quote.high), cls: "" },
+                { k: tr("Low", "最低"), v: fmt(gstock.quote.low), cls: "" },
+                { k: tr("Previous close", "昨收"), v: fmt(gstock.quote.prev_close), cls: "" },
               ].map((m) => (
                 <div key={m.k} className="rounded-lg bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">{m.k}</p>
@@ -387,24 +390,24 @@ export function StockData() {
           {gstock.metrics && (
             <GlassCard className="mb-4">
               <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-                <BarChart3 className="h-4 w-4 text-primary" /> 关键财务指标
+                <BarChart3 className="h-4 w-4 text-primary" /> {tr("Key financial metrics", "关键财务指标")}
                 <span className="text-xs font-normal text-muted-foreground/60">· {gstock.metrics.report_date}</span>
               </h3>
-              <p className="mb-3 text-[11px] text-muted-foreground/60">东财 GMAININDICATOR，最新报告期。金额为原生币种。</p>
+              <p className="mb-3 text-[11px] text-muted-foreground/60">{tr("Eastmoney GMAININDICATOR, latest reporting period. Amounts use the native currency.", "东财 GMAININDICATOR，最新报告期。金额为原生币种。")}</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  { k: "营业收入", v: bigMoney(gstock.metrics.revenue, gstock.market), yoy: gstock.metrics.revenue_yoy != null ? round2(gstock.metrics.revenue_yoy, "%") : "" },
-                  { k: "归母净利", v: bigMoney(gstock.metrics.net_profit, gstock.market), yoy: "" },
-                  { k: "每股收益 EPS", v: round2(gstock.metrics.eps), yoy: "" },
+                  { k: tr("Revenue", "营业收入"), v: bigMoney(gstock.metrics.revenue, gstock.market), yoy: gstock.metrics.revenue_yoy != null ? round2(gstock.metrics.revenue_yoy, "%") : "" },
+                  { k: tr("Net income", "归母净利"), v: bigMoney(gstock.metrics.net_profit, gstock.market), yoy: "" },
+                  { k: tr("EPS", "每股收益 EPS"), v: round2(gstock.metrics.eps), yoy: "" },
                   { k: "ROE", v: round2(gstock.metrics.roe, "%"), yoy: "" },
-                  { k: "毛利率", v: round2(gstock.metrics.gross_margin, "%"), yoy: "" },
-                  { k: "净利率", v: round2(gstock.metrics.net_margin, "%"), yoy: "" },
-                  { k: "资产负债率", v: round2(gstock.metrics.debt_ratio, "%"), yoy: "" },
+                  { k: tr("Gross margin", "毛利率"), v: round2(gstock.metrics.gross_margin, "%"), yoy: "" },
+                  { k: tr("Net margin", "净利率"), v: round2(gstock.metrics.net_margin, "%"), yoy: "" },
+                  { k: tr("Debt ratio", "资产负债率"), v: round2(gstock.metrics.debt_ratio, "%"), yoy: "" },
                 ].map((m) => (
                   <div key={m.k} className="rounded-lg bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground">{m.k}</p>
                     <p className="mt-0.5 font-mono text-base font-bold">{m.v}</p>
-                    {m.yoy && <p className="text-[11px] text-muted-foreground">同比 {m.yoy}</p>}
+                    {m.yoy && <p className="text-[11px] text-muted-foreground">{tr("YoY", "同比")} {m.yoy}</p>}
                   </div>
                 ))}
               </div>
@@ -414,15 +417,15 @@ export function StockData() {
           {cashflow && cashflow.periods.length > 0 && (
             <GlassCard className="mb-4">
               <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
-                <BarChart3 className="h-4 w-4 text-primary" /> 现金流量表
-                <span className="text-xs font-normal text-muted-foreground/60">· 单位：亿{cashflow.currency ?? ""}</span>
+                <BarChart3 className="h-4 w-4 text-primary" /> {tr("Cash flow statement", "现金流量表")}
+                <span className="text-xs font-normal text-muted-foreground/60">· {tr("Unit: hundred million", "单位：亿")}{cashflow.currency ?? ""}</span>
               </h3>
-              <p className="mb-3 text-[11px] text-muted-foreground/60">东财 RPT_HKSK_FN_CASHFLOW · 季度为年初至今累计 · 负数（现金流出）标绿。</p>
+              <p className="mb-3 text-[11px] text-muted-foreground/60">{tr("Eastmoney RPT_HKSK_FN_CASHFLOW · quarterly figures are year-to-date · negative cash outflows are shown in green.", "东财 RPT_HKSK_FN_CASHFLOW · 季度为年初至今累计 · 负数（现金流出）标绿。")}</p>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[520px] text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground">
-                      <th className="py-1 pr-3 text-left font-normal">科目</th>
+                      <th className="py-1 pr-3 text-left font-normal">{tr("Item", "科目")}</th>
                       {cashflow.periods.slice(0, 5).map((p) => (
                         <th key={p.report_date} className="px-2 py-1 text-right font-normal">{p.report_date.slice(0, 7)}</th>
                       ))}
@@ -458,7 +461,7 @@ export function StockData() {
         <>
           {aShareHistory && aShareHistory.bars.length > 0 && <GlassCard className="mb-4">
             <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><LineChart className="h-4 w-4 text-primary" /> 日线行情 · {aShareHistory.range}</h3>
-            <p className="mb-2 text-[11px] text-muted-foreground/60">A 股日线趋势与成交量；拖动底部区间可缩放。</p>
+            <p className="mb-2 text-[11px] text-muted-foreground/60">{tr("A-share daily trend and volume; drag the lower range to zoom.", "A 股日线趋势与成交量；拖动底部区间可缩放。")}</p>
             <PriceHistoryChart bars={aShareHistory.bars} currency="CNY" />
           </GlassCard>}
           <GlassCard glow className="mb-4">
@@ -488,28 +491,28 @@ export function StockData() {
           {pctl && (pctl.metrics.pe_ttm || pctl.metrics.pb) && (
             <GlassCard glow className="mb-4">
               <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><LineChart className="h-4 w-4 text-primary" /> 估值历史分位 · {pctl.period}</h3>
-              <p className="mb-4 text-[11px] text-muted-foreground/60">绿=低估区 / 灰=合理区 / 红=高估区。只显示当前处于历史什么位置，不构成买卖建议。</p>
+              <p className="mb-4 text-[11px] text-muted-foreground/60">{tr("Green = low zone / grey = middle zone / red = high zone. This shows historical position only and is not trading advice.", "绿=低估区 / 灰=合理区 / 红=高估区。只显示当前处于历史什么位置，不构成买卖建议。")}</p>
               <div className="space-y-4">
                 {pctl.metrics.pe_ttm && <ValBand label="PE-TTM" m={pctl.metrics.pe_ttm} />}
-                {pctl.metrics.pb && <ValBand label="市净率 PB" m={pctl.metrics.pb} />}
+                {pctl.metrics.pb && <ValBand label={tr("Price-to-book PB", "市净率 PB")} m={pctl.metrics.pb} />}
               </div>
             </GlassCard>
           )}
 
           {fin && (fin.revenue || fin.roe) && (
             <GlassCard className="mb-4">
-              <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><BarChart3 className="h-4 w-4 text-primary" /> 财务关键指标{fin.period && <span className="text-xs font-normal text-muted-foreground/60">· {fin.period}</span>}</h3>
-              <p className="mb-3 text-[11px] text-muted-foreground/60">同花顺财务摘要,最新报告期。</p>
+              <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold"><BarChart3 className="h-4 w-4 text-primary" /> {tr("Key financial metrics", "财务关键指标")}{fin.period && <span className="text-xs font-normal text-muted-foreground/60">· {fin.period}</span>}</h3>
+              <p className="mb-3 text-[11px] text-muted-foreground/60">{tr("Tonghuashun financial summary, latest reporting period.", "同花顺财务摘要，最新报告期。")}</p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {[
-                  { k: "营业总收入", v: fin.revenue, yoy: fin.revenue_yoy },
-                  { k: "归母净利润", v: fin.net_profit, yoy: fin.net_profit_yoy },
-                  { k: "每股收益", v: fin.eps },
+                  { k: tr("Revenue", "营业总收入"), v: fin.revenue, yoy: fin.revenue_yoy },
+                  { k: tr("Net income", "归母净利润"), v: fin.net_profit, yoy: fin.net_profit_yoy },
+                  { k: tr("EPS", "每股收益"), v: fin.eps },
                   { k: "ROE", v: fin.roe },
-                  { k: "销售毛利率", v: fin.gross_margin },
-                  { k: "销售净利率", v: fin.net_margin },
-                  { k: "每股净资产", v: fin.bvps },
-                  { k: "每股经营现金流", v: fin.op_cf_ps },
+                  { k: tr("Gross margin", "销售毛利率"), v: fin.gross_margin },
+                  { k: tr("Net margin", "销售净利率"), v: fin.net_margin },
+                  { k: tr("Book value per share", "每股净资产"), v: fin.bvps },
+                  { k: tr("Operating cash flow per share", "每股经营现金流"), v: fin.op_cf_ps },
                 ].map((m) => (
                   <div key={m.k} className="rounded-lg bg-muted/30 p-3">
                     <p className="text-xs text-muted-foreground">{m.k}</p>
@@ -561,11 +564,11 @@ export function StockData() {
           )}
 
           <GlassCard>
-            <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><Newspaper className="h-4 w-4 text-primary" /> 个股新闻</h3>
+            <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><Newspaper className="h-4 w-4 text-primary" /> {tr("Company news", "个股新闻")}</h3>
             {depNote ? (
               <p className="text-xs text-warning">{depNote}（安装后新闻/公告即可用）</p>
             ) : news.length === 0 ? (
-              <p className="text-xs text-muted-foreground/60">暂无新闻</p>
+              <p className="text-xs text-muted-foreground/60">{tr("No news", "暂无新闻")}</p>
             ) : (
               <div className="space-y-2">
                 {news.slice(0, 10).map((n, i) => (
@@ -585,13 +588,13 @@ export function StockData() {
           {/* 资金面 · 筹码（融资融券 / 股东户数 / 主力资金流 / 分红 / 大宗交易） */}
           {(margin.length > 0 || holders.length > 0 || fundFlow.length > 0 || dividend.length > 0) && (
             <GlassCard className="mb-4">
-              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><Wallet className="h-4 w-4 text-primary" /> 资金面 · 筹码</h3>
+              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><Wallet className="h-4 w-4 text-primary" /> {tr("Flows and ownership", "资金面 · 筹码")}</h3>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {margin[0] && <Metric k="融资余额" v={yi(margin[0].rzye)} sub={margin[0].date} />}
-                {margin[0] && <Metric k="融券余额" v={yi(margin[0].rqye)} />}
-                {holders[0] && <Metric k="股东户数" v={Number(holders[0].holder_num).toLocaleString()} sub={`环比 ${pct(holders[0].change_ratio)}`} />}
-                {fundFlow.length > 0 && <Metric k="近20日主力净流入" v={yi(fundFlow.slice(-20).reduce((s, r) => s + r.main_net, 0))} />}
-                {dividend[0] && <Metric k="最近派息(每10股)" v={`${dividend[0].bonus_rmb} 元`} sub={dividend[0].date} />}
+                {margin[0] && <Metric k={tr("Margin financing balance", "融资余额")} v={yi(margin[0].rzye)} sub={margin[0].date} />}
+                {margin[0] && <Metric k={tr("Securities lending balance", "融券余额")} v={yi(margin[0].rqye)} />}
+                {holders[0] && <Metric k={tr("Shareholder count", "股东户数")} v={Number(holders[0].holder_num).toLocaleString()} sub={`${tr("QoQ", "环比")} ${pct(holders[0].change_ratio)}`} />}
+                {fundFlow.length > 0 && <Metric k={tr("20-day main net inflow", "近20日主力净流入")} v={yi(fundFlow.slice(-20).reduce((s, r) => s + r.main_net, 0))} />}
+                {dividend[0] && <Metric k={tr("Latest dividend (per 10 shares)", "最近派息(每10股)")} v={`${dividend[0].bonus_rmb} ${tr("CNY", "元")}`} sub={dividend[0].date} />}
               </div>
               {blockT.length > 0 && (
                 <div className="mt-3 border-t border-border/40 pt-3">
@@ -608,7 +611,7 @@ export function StockData() {
                   </div>
                 </div>
               )}
-              <p className="mt-3 text-[11px] text-muted-foreground/60">资金/筹码为公开客观数据，仅供了解该股当前状态，不构成任何买卖建议。</p>
+              <p className="mt-3 text-[11px] text-muted-foreground/60">{tr("Flow and ownership figures are objective public data for understanding current conditions; they are not trading advice.", "资金/筹码为公开客观数据，仅供了解该股当前状态，不构成任何买卖建议。")}</p>
             </GlassCard>
           )}
 
@@ -628,13 +631,13 @@ export function StockData() {
               {(dt.seats.buy.length > 0 || dt.seats.sell.length > 0) && (
                 <div className="mt-3 grid gap-4 border-t border-border/40 pt-3 sm:grid-cols-2">
                   <div>
-                    <p className="mb-1.5 text-xs font-medium text-danger">买入席位 TOP</p>
+                    <p className="mb-1.5 text-xs font-medium text-danger">{tr("Top buying seats", "买入席位 TOP")}</p>
                     {dt.seats.buy.map((s, i) => (
                       <div key={i} className="flex justify-between gap-2 text-xs text-muted-foreground"><span className="truncate">{s.name}</span><span className="shrink-0 font-mono">净{s.net}万</span></div>
                     ))}
                   </div>
                   <div>
-                    <p className="mb-1.5 text-xs font-medium text-success">卖出席位 TOP</p>
+                    <p className="mb-1.5 text-xs font-medium text-success">{tr("Top selling seats", "卖出席位 TOP")}</p>
                     {dt.seats.sell.map((s, i) => (
                       <div key={i} className="flex justify-between gap-2 text-xs text-muted-foreground"><span className="truncate">{s.name}</span><span className="shrink-0 font-mono">净{s.net}万</span></div>
                     ))}
@@ -647,7 +650,7 @@ export function StockData() {
           {/* 限售解禁 */}
           {lockup && (lockup.upcoming.length > 0 || lockup.history.length > 0) && (
             <GlassCard className="mb-4">
-              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><CalendarClock className="h-4 w-4 text-primary" /> 限售解禁</h3>
+              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><CalendarClock className="h-4 w-4 text-primary" /> {tr("Lock-up expirations", "限售解禁")}</h3>
               {lockup.upcoming.length > 0 ? (
                 <div className="mb-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
                   <p className="mb-1.5 text-xs font-medium text-warning">未来 90 天待解禁（{lockup.upcoming.length}）</p>
@@ -656,7 +659,7 @@ export function StockData() {
                   ))}
                 </div>
               ) : (
-                <p className="mb-2 text-xs text-muted-foreground/70">未来 90 天无待解禁。</p>
+                <p className="mb-2 text-xs text-muted-foreground/70">{tr("No lock-up expirations in the next 90 days.", "未来 90 天无待解禁。")}</p>
               )}
               {lockup.history.length > 0 && (
                 <div>
@@ -672,7 +675,7 @@ export function StockData() {
           {/* 板块归属 · 概念 */}
           {((blocks && blocks.concept_tags.length > 0) || hotCon.length > 0) && (
             <GlassCard className="mb-4">
-              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><Boxes className="h-4 w-4 text-primary" /> 板块归属 · 概念</h3>
+              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><Boxes className="h-4 w-4 text-primary" /> {tr("Sector and themes", "板块归属 · 概念")}</h3>
               {blocks && blocks.concept_tags.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-1.5">
                   {blocks.concept_tags.slice(0, 24).map((t, i) => (
@@ -682,7 +685,7 @@ export function StockData() {
               )}
               {hotCon.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs text-muted-foreground">当下热门概念命中</p>
+                  <p className="mb-1.5 text-xs text-muted-foreground">{tr("Current hot-theme matches", "当下热门概念命中")}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {hotCon.slice(0, 12).map((h, i) => (
                       <span key={i} className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{h.concept}</span>
@@ -696,12 +699,12 @@ export function StockData() {
           {/* 投资者互动（互动易） */}
           {qa.filter((q) => q.answer).length > 0 && (
             <GlassCard className="mb-4">
-              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><MessageSquare className="h-4 w-4 text-primary" /> 投资者互动（互动易）</h3>
+              <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold"><MessageSquare className="h-4 w-4 text-primary" /> {tr("Investor Q&A", "投资者互动（互动易）")}</h3>
               <div className="space-y-3">
                 {qa.filter((q) => q.answer).slice(0, 5).map((q, i) => (
                   <div key={i} className="border-b border-border/40 pb-3 text-sm last:border-0">
-                    <p className="text-muted-foreground"><span className="mr-1.5 rounded bg-muted/50 px-1.5 py-0.5 text-[10px]">问</span>{q.question}</p>
-                    <p className="mt-1"><span className="mr-1.5 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">答</span>{q.answer}</p>
+                    <p className="text-muted-foreground"><span className="mr-1.5 rounded bg-muted/50 px-1.5 py-0.5 text-[10px]">{tr("Q", "问")}</span>{q.question}</p>
+                    <p className="mt-1"><span className="mr-1.5 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary">{tr("A", "答")}</span>{q.answer}</p>
                     <p className="mt-1 text-[11px] text-muted-foreground/60">{q.ask_time}</p>
                   </div>
                 ))}
@@ -714,8 +717,8 @@ export function StockData() {
       {!val && !gstock && !marketSnapshot && !err && !loading && (
         <GlassCard>
           <div className="py-10 text-center text-sm text-muted-foreground">
-            {assetType === "crypto" ? "输入 BTC、ETH、SOL 等 Coinbase USD 现货代码。" : "输入 A 股、美股或带交易所后缀的欧洲股票代码。"}<br />
-            <span className="text-xs text-muted-foreground/60">{assetType === "crypto" ? "加密货币提供 Coinbase 行情、UTC 日线和兼容技能；不显示不适用的公司基本面。" : "海外首期提供 Yahoo 行情与历史价格；基本面、公告和新闻按已接入来源如实显示。"}</span>
+            {assetType === "crypto" ? tr("Enter a Coinbase USD spot symbol such as BTC, ETH, or SOL.", "输入 BTC、ETH、SOL 等 Coinbase USD 现货代码。") : tr("Enter an A-share, US, or exchange-qualified European stock symbol.", "输入 A 股、美股或带交易所后缀的欧洲股票代码。")}<br />
+            <span className="text-xs text-muted-foreground/60">{assetType === "crypto" ? tr("Crypto provides Coinbase prices, UTC daily bars, and compatible skills; inapplicable company fundamentals are hidden.", "加密货币提供 Coinbase 行情、UTC 日线和兼容技能；不显示不适用的公司基本面。") : tr("International coverage initially provides Yahoo prices and history; fundamentals, filings, and news are shown according to connected sources.", "海外首期提供 Yahoo 行情与历史价格；基本面、公告和新闻按已接入来源如实显示。")}</span>
           </div>
         </GlassCard>
       )}

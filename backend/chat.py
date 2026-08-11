@@ -24,6 +24,29 @@ import tools
 _TOOL_RESULT_CAP = 6000  # 单次工具结果注入上限（控 token）
 
 
+def output_language_instruction(cfg: dict) -> str:
+    locale = str(cfg.get("_locale", "en"))
+    language = "Simplified Chinese" if locale == "zh-CN" else "English"
+    return (
+        f"Write all user-facing prose in {language}. Preserve ticker symbols, "
+        "financial identifiers, quoted source titles and raw field names where accuracy requires it."
+    )
+
+
+def localized_text(cfg: dict, english: str, chinese: str) -> str:
+    return chinese if str(cfg.get("_locale", "en")) == "zh-CN" else english
+
+
+def _localized_messages(cfg: dict, messages: list) -> list:
+    instruction = output_language_instruction(cfg)
+    localized = [dict(message) for message in messages]
+    for message in localized:
+        if message.get("role") == "system":
+            message["content"] = f"{message.get('content', '')}\n\nOutput language:\n{instruction}"
+            return localized
+    return [{"role": "system", "content": instruction}, *localized]
+
+
 # —— 防 SSRF：用户可自带 OpenAI 兼容端点，但后端替其发请求前要挡住指向云元数据/内网的地址 ——
 _PUBLIC_MODE = bool(os.environ.get("VR_API_KEY", "").strip())  # 设了鉴权≈公网部署姿态
 _METADATA_NETS = [ipaddress.ip_network("169.254.0.0/16"), ipaddress.ip_network("fe80::/10")]
@@ -71,7 +94,7 @@ def _call_llm(cfg: dict, messages: list, use_tools: bool, tool_defs: list[dict] 
     if not base.endswith(("/v1", "/v3", "/api/v3")):
         # 多数 OpenAI 兼容端点需要 /v1；已带版本段则不动。
         base = base + "/v1"
-    payload = {"model": cfg["model"], "messages": messages, "temperature": 0.3}
+    payload = {"model": cfg["model"], "messages": _localized_messages(cfg, messages), "temperature": 0.3}
     if use_tools:
         payload["tools"] = tool_defs or []
         payload["tool_choice"] = "auto"
@@ -140,8 +163,8 @@ def run_chat_cli(cfg: dict, user_messages: list, context: str, workflow_id: str)
     provider = str(cfg.get("provider", ""))
     kind = provider[4:] if provider.startswith("cli-") else provider
     profile = ai_workflows.get_workflow(workflow_id)
-    system = profile.system_prompt(context, tools_available=False)
-    user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "（无问题）"
+    system = f"{profile.system_prompt(context, tools_available=False)}\n\n{output_language_instruction(cfg)}"
+    user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "(no question)"
     content = cli_runtime.run_cli(kind, system, user)
     return {"content": content, "trace": [], "rounds": 1}
 
@@ -159,7 +182,7 @@ def _resolve_base(cfg: dict) -> str:
 
 def _call_llm_stream(cfg: dict, messages: list, use_tools: bool, tool_defs: list[dict] | None = None):
     _check_base_url(cfg.get("baseURL", ""))
-    payload = {"model": cfg["model"], "messages": messages, "temperature": 0.3, "stream": True}
+    payload = {"model": cfg["model"], "messages": _localized_messages(cfg, messages), "temperature": 0.3, "stream": True}
     if use_tools:
         payload["tools"] = tool_defs or []
         payload["tool_choice"] = "auto"
@@ -279,8 +302,8 @@ def run_chat_cli_stream(cfg: dict, user_messages: list, context: str, workflow_i
     kind = provider[4:] if provider.startswith("cli-") else provider
     profile = ai_workflows.get_workflow(workflow_id)
     yield {"type": "meta", "workflow": profile.public_metadata(provider)}
-    system = profile.system_prompt(context, tools_available=False)
-    user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "（无问题）"
+    system = f"{profile.system_prompt(context, tools_available=False)}\n\n{output_language_instruction(cfg)}"
+    user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "(no question)"
     for chunk in cli_runtime.run_cli_stream(kind, system, user):
         yield {"type": "delta", "text": chunk}
     yield {"type": "done", "trace": [], "rounds": 1}

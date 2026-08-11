@@ -16,8 +16,8 @@ export const portfolioAiNumber = (value: number | null | undefined): string => p
 
 export const investmentProfileContext = (items: string[]): string =>
   items.length
-    ? `投资目标与风险偏好（用户自述）：\n${items.map((item) => `- ${item}`).join("\n")}`
-    : "投资目标与风险偏好：用户尚未设置。";
+    ? `Investment objectives and risk preferences (user-provided):\n${items.map((item) => `- ${item}`).join("\n")}`
+    : "Investment objectives and risk preferences: not configured.";
 
 export const portfolioAiInstruction =
-  "请先根据上述目标和风险偏好评估当前组合是否匹配，再分析集中度、流动性和主要风险，提出可能的调整方向与取舍；区分事实、推断和缺失信息，不要暗示已执行任何交易。";
+  "First assess whether the portfolio matches the stated objectives and risk preferences. Then analyze concentration, liquidity, and key risks, and explain possible adjustments and trade-offs. Separate facts, inferences, and missing information, and never imply that a trade was executed.";

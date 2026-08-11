@@ -9,7 +9,7 @@ const cryptoPortfolio = readFileSync(new URL("../src/components/portfolio/Crypto
 const debate = readFileSync(new URL("../src/pages/Debate.tsx", import.meta.url), "utf8");
 
 test("crypto is a first-class selectable daily-review market", () => {
-  assert.match(daily, /option value="Crypto">加密市场/);
+  assert.match(daily, /option value="Crypto">\{tr\("Crypto", "加密市场"\)\}/);
   assert.match(daily, /api\.cryptoOverview\(\)/);
 });
 
@@ -20,9 +20,9 @@ test("instrument data and debate use explicit asset selection", () => {
 });
 
 test("portfolio exposes overview stock and crypto top-level tabs", () => {
-  assert.match(portfolio, /\['overview', '总览'\]/);
-  assert.match(portfolio, /\['stocks', '股票'\]/);
-  assert.match(portfolio, /\['crypto', '加密货币'\]/);
+  assert.match(portfolio, /\['overview', tr\('Overview', '总览'\)\]/);
+  assert.match(portfolio, /\['stocks', tr\('Stocks', '股票'\)\]/);
+  assert.match(portfolio, /\['crypto', tr\('Crypto', '加密货币'\)\]/);
 });
 
 test("manual crypto CSV renders validated rows before commit", () => {

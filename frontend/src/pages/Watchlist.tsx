@@ -8,6 +8,7 @@ import { loadWatch, saveWatch, addCodes } from "@/lib/watchlist";
 import { useLiveQuotes, isTradingHours } from "@/hooks/useLiveQuotes";
 import { cn } from "@/lib/utils";
 import { isAShareSymbol } from "@/lib/market-symbols";
+import { useLocale } from "@/lib/i18n";
 
 // International convention: green up, red down.
 const color = (v: number | null | undefined) =>
@@ -34,6 +35,7 @@ const saveLive = (on: boolean) => {
 };
 
 export function Watchlist() {
+  const { locale, tr } = useLocale();
   const [codes, setCodes] = useState<string[]>(loadWatch);
   const [input, setInput] = useState("");
   const [hint, setHint] = useState<string | null>(null);
@@ -53,11 +55,11 @@ export function Watchlist() {
   const add = () => {
     const { next, added } = addCodes(codes, input);
     if (added === 0) {
-      setHint(input.trim() ? "没识别到新的股票代码（可能已在自选里）" : null);
+      setHint(input.trim() ? tr("No new symbols recognised (they may already be in your watchlist)", "没识别到新的股票代码（可能已在自选里）") : null);
       setInput("");
       return;
     }
-    setCodes(next); saveWatch(next); setInput(""); setHint(`已添加 ${added} 只`);
+    setCodes(next); saveWatch(next); setInput(""); setHint(tr(`Added ${added}`, `已添加 ${added} 只`));
   };
   const remove = (c: string) => {
     const next = codes.filter((x) => x !== c);
@@ -67,29 +69,29 @@ export function Watchlist() {
   const aiContext = useMemo(
     () =>
       codes.length
-        ? "我的自选股（本地）：\n" +
+        ? "My local watchlist:\n" +
           codes
             .map((c) => {
               const q = quotes[c];
               return q
-                ? `${q.name}(${c}) 现价${q.price} ${pct(q.change_pct)} PE(TTM)${q.pe_ttm ?? "—"} 换手${q.turnover_pct ?? "—"}%`
-                : `${c}（行情未取到）`;
+                ? `${q.name} (${c}): price ${q.price}; change ${pct(q.change_pct)}; PE (TTM) ${q.pe_ttm ?? "—"}; turnover ${q.turnover_pct ?? "—"}%`
+                : `${c} (quote unavailable)`;
             })
             .join("\n")
-        : "还没有自选股。",
+        : "The watchlist is empty.",
     [codes, quotes],
   );
 
   return (
     <div>
       <PageHeader
-        title="自选股"
-        subtitle="批量添加、一屏总览你关注的标的。数据只存本地、不上传。"
+        title={tr("Watchlist", "自选股")}
+        subtitle={tr("Add instruments in bulk and review them in one place. Data remains local.", "批量添加、一屏总览你关注的标的。数据只存本地、不上传。")}
         actions={
           <div className="flex items-center gap-2">
             <button
               onClick={toggleLive}
-              title={live ? "关闭实时行情" : "开启实时行情（交易时段每 3 秒自动刷新）"}
+              title={live ? tr("Disable live quotes", "关闭实时行情") : tr("Enable live quotes", "开启实时行情（交易时段每 3 秒自动刷新）")}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors",
                 live
@@ -108,14 +110,14 @@ export function Watchlist() {
                   )}
                 />
               </span>
-              实时行情
+              {tr("Live quotes", "实时行情")}
             </button>
             {codes.length > 0 && (
               <AskAiButton
                 workflow="watchlist"
                 context={aiContext}
-                label="让 AI 读自选"
-                suggestions={["这几只里哪些估值偏高", "帮我按赛道分组看看", "各自最大的风险点是什么"]}
+                label={tr("Ask AI about watchlist", "让 AI 读自选")}
+                suggestions={locale === "zh-CN" ? ["这几只里哪些估值偏高", "帮我按赛道分组看看", "各自最大的风险点是什么"] : ["Which names have relatively high valuations?", "Group these by investment theme", "What is the main risk for each?"]}
               />
             )}
           </div>
@@ -124,7 +126,7 @@ export function Watchlist() {
 
       <GlassCard className="mb-4">
         <label className="mb-1.5 block text-xs text-muted-foreground">
-          批量添加 —— 支持 A 股、美股和带交易所后缀的欧洲股票
+          {tr("Bulk add — China A-shares, US stocks, and exchange-qualified European stocks", "批量添加 —— 支持 A 股、美股和带交易所后缀的欧洲股票")}
         </label>
         <div className="flex gap-2">
           <textarea
@@ -141,7 +143,7 @@ export function Watchlist() {
             onClick={add}
             className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-lg bg-primary/15 px-4 text-sm font-medium text-primary shadow-glow hover:bg-primary/25"
           >
-            <Plus className="h-4 w-4" /> 添加
+            <Plus className="h-4 w-4" /> {tr("Add", "添加")}
           </button>
         </div>
         {hint && <p className="mt-2 text-xs text-muted-foreground/70">{hint}</p>}
@@ -150,7 +152,7 @@ export function Watchlist() {
       <GlassCard glow>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="flex items-center gap-1.5 font-semibold">
-            <Star className="h-4 w-4 text-primary" /> 自选总览
+            <Star className="h-4 w-4 text-primary" /> {tr("Watchlist overview", "自选总览")}
             <span className="text-xs font-normal text-muted-foreground">（{codes.length}）</span>
           </h3>
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground/70">
@@ -160,12 +162,12 @@ export function Watchlist() {
               <>
                 {/* 把「开着却没在刷」的原因说清楚，否则用户会以为坏了 */}
                 {live && !polling && codes.length > 0 && (
-                  <span>{codes.some((c) => !isAShareSymbol(c)) || isTradingHours() ? "已暂停（页面未激活）" : "非交易时段 · 已暂停"}</span>
+                  <span>{codes.some((c) => !isAShareSymbol(c)) || isTradingHours() ? tr("Paused (page inactive)", "已暂停（页面未激活）") : tr("Outside trading hours · Paused", "非交易时段 · 已暂停")}</span>
                 )}
-                {polling && <span className="text-primary/80">实时 · {codes.some((c) => !isAShareSymbol(c)) ? "每 30 秒" : "每 3 秒"}</span>}
+                {polling && <span className="text-primary/80">{tr("Live", "实时")} · {codes.some((c) => !isAShareSymbol(c)) ? tr("Every 30 seconds", "每 30 秒") : tr("Every 3 seconds", "每 3 秒")}</span>}
                 {updatedAt && (
                   <span className="font-mono">
-                    {new Date(updatedAt).toLocaleTimeString("zh-CN", { hour12: false })}
+                    {new Date(updatedAt).toLocaleTimeString(locale, { hour12: false })}
                   </span>
                 )}
               </>
@@ -174,7 +176,7 @@ export function Watchlist() {
               onClick={refresh}
               disabled={loading}
               className="text-muted-foreground hover:text-primary"
-              title="立即刷新"
+              title={tr("Refresh now", "立即刷新")}
             >
               <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
             </button>
@@ -182,14 +184,14 @@ export function Watchlist() {
         </div>
         {codes.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground/60">
-            还没有自选股，用上面的框粘贴一串代码批量添加。
+            {tr("Your watchlist is empty. Paste symbols above to add them in bulk.", "还没有自选股，用上面的框粘贴一串代码批量添加。")}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                  {["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", ""].map((h) => (
+                  {(locale === "zh-CN" ? ["名称", "代码", "现价", "涨跌%", "PE(TTM)", "PB", "换手%", ""] : ["Name", "Symbol", "Price", "Change %", "PE (TTM)", "PB", "Turnover %", ""]).map((h) => (
                     <th key={h} className="whitespace-nowrap px-2 py-2 font-medium">
                       {h}
                     </th>
@@ -212,7 +214,7 @@ export function Watchlist() {
                         <button
                           onClick={() => remove(c)}
                           className="text-muted-foreground/50 hover:text-destructive"
-                          title="移除"
+                          title={tr("Remove", "移除")}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>

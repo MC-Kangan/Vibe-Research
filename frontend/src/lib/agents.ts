@@ -4,6 +4,7 @@
 import { ApiError } from "@/lib/api";
 import { loadLlm } from "@/lib/llm";
 import { streamNdjson, type NdjsonEvent } from "@/lib/ndjson";
+import { getLocale, translate } from "@/lib/i18n";
 
 export type DebateStage = "bull" | "bear" | "bull_rebut" | "bear_rebut" | "referee";
 export type ResearchTeamStage = "fundamentals" | "market" | "events" | "lead";
@@ -22,7 +23,7 @@ export interface DebateHandlers {
 
 function requireLlm() {
   const llm = loadLlm();
-  if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
+  if (!llm) throw new ApiError(translate(getLocale(), "AI is not configured. Open AI Setup first.", "尚未接入 AI，请先在「接入 AI」里配置"), 400);
   return llm;
 }
 
@@ -65,7 +66,7 @@ export async function debateStream(
   contexts: ResearchContextItem[] = [],
 ): Promise<void> {
   const llm = requireLlm();
-  await streamNdjson("/api/debate", { code, rounds, llm, asset_type: assetType, additional_contexts: contexts }, (ev) => dispatchDebate(ev, handlers), signal);
+  await streamNdjson("/api/debate", { code, rounds, llm, locale: getLocale(), asset_type: assetType, additional_contexts: contexts }, (ev) => dispatchDebate(ev, handlers), signal);
 }
 
 export interface ResearchTeamHandlers extends Omit<DebateHandlers, "onStageStart" | "onDelta" | "onStageDone" | "onError"> {
@@ -85,7 +86,7 @@ export async function researchTeamStream(
 ): Promise<void> {
   const llm = requireLlm();
   await streamNdjson("/api/research-team", {
-    code, llm, asset_type: assetType, additional_contexts: contexts,
+    code, llm, locale: getLocale(), asset_type: assetType, additional_contexts: contexts,
     position_instrument_key: positionInstrumentKey || null,
   }, (ev) => dispatchDebate(ev, handlers as DebateHandlers), signal);
 }
@@ -105,7 +106,7 @@ export async function reflectStream(
   signal?: AbortSignal,
 ): Promise<void> {
   const llm = requireLlm();
-  await streamNdjson("/api/reflect", { source, title, llm }, (ev) => {
+  await streamNdjson("/api/reflect", { source, title, llm, locale: getLocale() }, (ev) => {
     if (ev.type === "status") handlers.onStatus?.(ev.message);
     else if (ev.type === "delta") handlers.onDelta?.(ev.text);
     else if (ev.type === "done") handlers.onDone?.(ev.content, !!ev.truncated);

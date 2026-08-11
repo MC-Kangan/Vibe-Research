@@ -4,16 +4,18 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import sectorsData from "@/data/sectors.json";
+import { useLocale } from "@/lib/i18n";
 
 export function Sectors() {
+  const { locale, tr } = useLocale();
   const sectors = sectorsData.sectors;
   const hotCount = sectors.filter((s) => s.hot).length;
 
   return (
     <div>
       <PageHeader
-        title="板块中心"
-        subtitle={`${sectors.length} 个热门赛道的产业链骨架 · 只有环节，不含标的`}
+        title={tr("Sector Centre", "板块中心")}
+        subtitle={tr(`Value-chain maps for ${sectors.length} themes · Stages only, no securities`, `${sectors.length} 个热门赛道的产业链骨架 · 只有环节，不含标的`)}
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -22,18 +24,18 @@ export function Sectors() {
             <GlassCard glow={s.hot} className="flex h-full flex-col justify-between">
               <div>
                 <div className="mb-1 flex items-center gap-2">
-                  <h3 className="text-base font-bold">{s.label}</h3>
+                  <h3 className="text-base font-bold">{locale === "zh-CN" ? s.label : s.label_en}</h3>
                   {s.hot && (
                     <span className="inline-flex items-center gap-0.5 rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                      <Flame className="h-3 w-3" /> 热门
+                      <Flame className="h-3 w-3" /> {tr("Hot", "热门")}
                     </span>
                   )}
                 </div>
-                <p className="text-xs leading-relaxed text-muted-foreground">{s.tagline}</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">{locale === "zh-CN" ? s.tagline : s.tagline_en}</p>
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-border/50 pt-3 text-xs">
                 <span className="text-muted-foreground">
-                  {s.verified ? `${s.nodes.length} 个环节` : "环节梳理中"}
+                  {s.verified ? tr(`${s.nodes.length} stages`, `${s.nodes.length} 个环节`) : tr("Mapping in progress", "环节梳理中")}
                 </span>
                 <ChevronRight className="h-4 w-4 text-primary" />
               </div>
@@ -43,7 +45,7 @@ export function Sectors() {
       </div>
 
       <p className="mt-4 text-center text-xs text-muted-foreground/60">
-        共 {sectors.length} 个板块，其中 {hotCount} 个热门 · 环节持续实时核实补全
+        {tr(`${sectors.length} sectors, ${hotCount} hot · Value-chain stages are continuously verified`, `共 ${sectors.length} 个板块，其中 ${hotCount} 个热门 · 环节持续实时核实补全`)}
       </p>
       <Disclaimer />
     </div>

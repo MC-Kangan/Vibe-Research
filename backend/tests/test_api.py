@@ -74,6 +74,16 @@ def test_chat_rejects_client_supplied_system_messages():
     assert r.status_code == 422
 
 
+def test_chat_rejects_unknown_locale():
+    r = client.post("/api/chat", json={
+        "workflow": "general",
+        "locale": "fr",
+        "messages": [{"role": "user", "content": "hi"}],
+        "llm": {"provider": "deepseek", "model": "m", "baseURL": "https://example.com", "apiKey": "k"},
+    })
+    assert r.status_code == 422
+
+
 def test_ai_workflow_catalog_exposes_capability_boundaries():
     r = client.get("/api/ai/workflows")
     assert r.status_code == 200

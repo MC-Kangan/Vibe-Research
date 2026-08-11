@@ -184,7 +184,12 @@ class ChatReq(BaseModel):
     messages: list[ChatMessage] = Field(max_length=40)
     context: str = Field(default="", max_length=150_000)
     workflow: str = Field(max_length=32)
+    locale: Literal["en", "zh-CN"] = "en"
     llm: LLMConfig
+
+
+def _locale_text(locale: str, english: str, chinese: str) -> str:
+    return chinese if locale == "zh-CN" else english
 
 
 @app.get("/api/ai/workflows")
@@ -209,9 +214,9 @@ def chat(req: ChatReq):
     配置错误（缺 key / 未装 CLI）走 HTTP 400；运行时错误走流内 error 事件。用户配置随请求传入，后端不持久化。
     """
     if not req.messages:
-        raise HTTPException(400, "messages 不能为空")
+        raise HTTPException(400, _locale_text(req.locale, "messages cannot be empty", "messages 不能为空"))
     if not req.llm.model:
-        raise HTTPException(400, "缺少模型配置，请先在「接入 AI」里选择")
+        raise HTTPException(400, _locale_text(req.locale, "Choose a model in AI Setup first.", "缺少模型配置，请先在「接入 AI」里选择"))
     try:
         ai_workflows.get_workflow(req.workflow)
     except ValueError as exc:
@@ -221,11 +226,12 @@ def chat(req: ChatReq):
     if is_cli:
         kind = req.llm.provider[4:]
         if not cli_runtime.detect_cli(kind):
-            raise HTTPException(400, f"未检测到「{kind}」对应的本机命令。请先安装并登录该 CLI，或改用「API 接入」。")
+            raise HTTPException(400, _locale_text(req.locale, f"The local {kind} command was not found. Install and authenticate it, or use API access.", f"未检测到「{kind}」对应的本机命令。请先安装并登录该 CLI，或改用「API 接入」。"))
     elif not req.llm.apiKey or not req.llm.baseURL:
-        raise HTTPException(400, "缺少 Base URL 或 API Key，请先在「接入 AI」里填写")
+        raise HTTPException(400, _locale_text(req.locale, "Enter a Base URL and API key in AI Setup.", "缺少 Base URL 或 API Key，请先在「接入 AI」里填写"))
 
     cfg = req.llm.model_dump()
+    cfg["_locale"] = req.locale
     messages = [message.model_dump() for message in req.messages]
 
     def gen():
@@ -236,25 +242,27 @@ def chat(req: ChatReq):
             for ev in events:
                 yield json.dumps(ev, ensure_ascii=False) + "\n"
         except Exception as e:  # noqa: BLE001 — 运行时错误以流内事件上报，不中断连接
-            yield json.dumps({"type": "error", "message": f"对话失败：{e}"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "error", "message": _locale_text(req.locale, f"Chat failed: {e}", f"对话失败：{e}")}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
-def _check_llm(llm: LLMConfig) -> dict:
+def _check_llm(llm: LLMConfig, locale: Literal["en", "zh-CN"] = "en") -> dict:
     """校验模型配置并返回 cfg（chat / debate / reflect 三个流式端点共用）。
 
     配置问题走 HTTP 400（前端能弹提示引导去「接入 AI」页），运行时错误留给流内 error 事件。
     """
     if not llm.model:
-        raise HTTPException(400, "缺少模型配置，请先在「接入 AI」里选择")
+        raise HTTPException(400, _locale_text(locale, "Choose a model in AI Setup first.", "缺少模型配置，请先在「接入 AI」里选择"))
     if llm.provider.startswith("cli-"):
         kind = llm.provider[4:]
         if not cli_runtime.detect_cli(kind):
-            raise HTTPException(400, f"未检测到「{kind}」对应的本机命令。请先安装并登录该 CLI，或改用「API 接入」。")
+            raise HTTPException(400, _locale_text(locale, f"The local {kind} command was not found. Install and authenticate it, or use API access.", f"未检测到「{kind}」对应的本机命令。请先安装并登录该 CLI，或改用「API 接入」。"))
     elif not llm.apiKey or not llm.baseURL:
-        raise HTTPException(400, "缺少 Base URL 或 API Key，请先在「接入 AI」里填写")
-    return llm.model_dump()
+        raise HTTPException(400, _locale_text(locale, "Enter a Base URL and API key in AI Setup.", "缺少 Base URL 或 API Key，请先在「接入 AI」里填写"))
+    cfg = llm.model_dump()
+    cfg["_locale"] = locale
+    return cfg
 
 
 def _ndjson(events):
@@ -279,6 +287,7 @@ class DebateReq(BaseModel):
     rounds: int = 1
     asset_type: str = "equity"
     llm: LLMConfig
+    locale: Literal["en", "zh-CN"] = "en"
     additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
 
 
@@ -293,8 +302,8 @@ def debate(req: DebateReq):
     elif req.asset_type == "equity":
         code = _validate_stock_symbol(req.code)
     else:
-        raise HTTPException(400, "asset_type 仅支持 equity 或 crypto")
-    cfg = _check_llm(req.llm)
+        raise HTTPException(400, _locale_text(req.locale, "asset_type must be equity or crypto", "asset_type 仅支持 equity 或 crypto"))
+    cfg = _check_llm(req.llm, req.locale)
     rounds = 2 if req.rounds >= 2 else 1
     try:
         contexts = research_context.normalize([item.model_dump() for item in req.additional_contexts])
@@ -325,6 +334,7 @@ class ResearchTeamReq(BaseModel):
     code: str
     asset_type: Literal["equity", "crypto"] = "equity"
     llm: LLMConfig
+    locale: Literal["en", "zh-CN"] = "en"
     additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
     position_instrument_key: str | None = Field(default=None, max_length=64)
 
@@ -340,7 +350,7 @@ def research_team_run(request: ResearchTeamReq):
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if code.strip().upper() != provider_symbol:
-            raise HTTPException(400, "研究代码必须与所选 IBKR 持仓的行情代码一致")
+            raise HTTPException(400, _locale_text(request.locale, "The research symbol must match the selected IBKR position symbol.", "研究代码必须与所选 IBKR 持仓的行情代码一致"))
         code = provider_symbol
     if request.asset_type == "crypto":
         code = market_data.resolve_crypto_symbol(code).removesuffix("-USD")
@@ -350,7 +360,7 @@ def research_team_run(request: ResearchTeamReq):
         contexts = research_context.normalize([item.model_dump() for item in request.additional_contexts])
     except research_context.ResearchContextError as exc:
         raise HTTPException(400, str(exc)) from exc
-    cfg = _check_llm(request.llm)
+    cfg = _check_llm(request.llm, request.locale)
     response = _ndjson(lambda: research_team.run_stream(cfg, code, request.asset_type, contexts, position_text))
     if position_context:
         response.headers["X-Vibe-Position-Context"] = "selected-only"
@@ -361,14 +371,15 @@ class ReflectReq(BaseModel):
     source: str
     title: str = ""
     llm: LLMConfig
+    locale: Literal["en", "zh-CN"] = "en"
 
 
 @app.post("/api/reflect")
 def reflect(req: ReflectReq):
     """反思：对一段已写好的分析做推理审计（哪些有数据支撑、最脆弱一环、验证清单），流式 NDJSON。"""
     if not (req.source or "").strip():
-        raise HTTPException(400, "source 不能为空")
-    cfg = _check_llm(req.llm)
+        raise HTTPException(400, _locale_text(req.locale, "source cannot be empty", "source 不能为空"))
+    cfg = _check_llm(req.llm, req.locale)
     return _ndjson(lambda: reflect_layer.run_reflection_stream(cfg, req.source, req.title))
 
 

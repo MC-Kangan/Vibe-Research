@@ -8,8 +8,8 @@ const source = readFileSync(
 );
 
 test("IBKR refresh actions have one clear full-sync primary action", () => {
-  assert.match(source, /onClick=\{refreshAll\}[^\n]+\{activeJob \? "同步中" : "同步 IBKR"\}/);
-  assert.match(source, /onClick=\{refresh\}[^\n]+仅更新持仓<\/button>/);
+  assert.match(source, /onClick=\{refreshAll\}[^\n]+activeJob \? tr\("Syncing", "同步中"\) : tr\("Sync IBKR", "同步 IBKR"\)/);
+  assert.match(source, /onClick=\{refresh\}[^\n]+tr\("Positions only", "仅更新持仓"\)/);
   assert.doesNotMatch(source, /刷新当前 \+ 历史/);
 });
 
@@ -19,21 +19,21 @@ test("portfolio candles use green for up and red for down", () => {
 
 test("volume is displayed in millions and the cost label stays inside the chart", () => {
   assert.match(source, /\(bar\.volume \|\| 0\) \/ 1_000_000/);
-  assert.match(source, /name: "成交量（百万）"/);
+  assert.match(source, /name: tr\("Volume \(millions\)", "成交量（百万）"\)/);
   assert.match(source, /position: "insideEndTop"/);
   assert.match(source, /right: 76/);
 });
 
 test("execution markers use outlined directional arrows distinct from candles", () => {
-  assert.match(source, /name: "买入"[^\n]+symbol: "path:\/\/M0,-8 L8,8 L-8,8 Z"[^\n]+color: "#14b8a6"[^\n]+borderWidth: 2/);
-  assert.match(source, /name: "卖出"[^\n]+symbol: "path:\/\/M0,8 L8,-8 L-8,-8 Z"[^\n]+color: "#f97316"[^\n]+borderWidth: 2/);
+  assert.match(source, /name: tr\("Buy", "买入"\)[^\n]+symbol: "path:\/\/M0,-8 L8,8 L-8,8 Z"[^\n]+color: "#14b8a6"[^\n]+borderWidth: 2/);
+  assert.match(source, /name: tr\("Sell", "卖出"\)[^\n]+symbol: "path:\/\/M0,8 L8,-8 L-8,-8 Z"[^\n]+color: "#f97316"[^\n]+borderWidth: 2/);
   assert.doesNotMatch(source, /symbolRotate/);
 });
 
 test("AI position context requires exchange-aware provider symbols", () => {
-  assert.match(source, /查询实时价格时必须使用下方“行情代码”/);
+  assert.match(source, /Use the market-data symbol below for live-price queries/);
   assert.match(source, /instrument\?\.provider_symbol/);
-  assert.match(source, /交易所\$\{item\.venue/);
+  assert.match(source, /venue \$\{item\.venue/);
 });
 
 test("IBKR ledger stays automatic for the user", () => {

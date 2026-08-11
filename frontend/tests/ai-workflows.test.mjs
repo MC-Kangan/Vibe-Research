@@ -24,9 +24,9 @@ test("every Ask AI entry point declares a controlled workflow", () => {
 test("AI client sends workflow and exposes runtime capability metadata", () => {
   const llm = read("../src/lib/llm.ts");
   const panel = read("../src/components/ui/AskAiButton.tsx");
-  assert.match(llm, /JSON\.stringify\(\{ workflow, messages, context, llm \}\)/);
+  assert.match(llm, /JSON\.stringify\(\{ workflow, messages, context, llm, locale \}\)/);
   assert.match(llm, /ev\.type === "meta"/);
-  assert.match(panel, /通用网页搜索未开启/);
-  assert.match(panel, /仅页面上下文/);
-  assert.match(panel, /受控 Vibe 数据工具/);
+  assert.match(panel, /General web search disabled/);
+  assert.match(panel, /Page context only/);
+  assert.match(panel, /Controlled Vibe data tools/);
 });

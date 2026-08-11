@@ -37,38 +37,38 @@ import research_context
 #   True ：空可能是真实情况（真没解禁、非两融标的、小票没研报）→ 不算缺口，
 #          但底稿里会写明「无记录」，跟「没取到」区分开。
 _DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
-    ("query_quote", {}, "实时行情", True, False),
-    ("query_valuation", {}, "估值与一致预期", False, False),
-    ("query_valuation_percentile", {}, "估值历史分位", True, False),
-    ("query_financials", {}, "最新财报关键指标", True, False),
-    ("query_kline", {"count": 60}, "近 60 日价格走势", True, False),
-    ("query_fund_flow", {"days": 5}, "资金流向", False, False),
-    ("query_margin", {}, "融资融券", False, True),
-    ("query_holders", {}, "股东户数", False, True),
-    ("query_announcements", {}, "近期公告", True, True),
-    ("query_lockup", {}, "限售解禁", False, True),
-    ("query_concepts", {}, "板块与概念归属", False, False),
-    ("query_reports", {}, "近期研报", True, True),
-    ("query_news", {}, "近期新闻", True, True),
+    ("query_quote", {}, "Live quote", True, False),
+    ("query_valuation", {}, "Valuation and consensus", False, False),
+    ("query_valuation_percentile", {}, "Historical valuation percentile", True, False),
+    ("query_financials", {}, "Latest financial metrics", True, False),
+    ("query_kline", {"count": 60}, "60-day price history", True, False),
+    ("query_fund_flow", {"days": 5}, "Fund flows", False, False),
+    ("query_margin", {}, "Margin financing and securities lending", False, True),
+    ("query_holders", {}, "Shareholder count", False, True),
+    ("query_announcements", {}, "Recent announcements", True, True),
+    ("query_lockup", {}, "Lock-up expirations", False, True),
+    ("query_concepts", {}, "Sector and theme classification", False, False),
+    ("query_reports", {}, "Recent research reports", True, True),
+    ("query_news", {}, "Recent news", True, True),
 ]
 
 _MARKET_DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
-    ("query_market_snapshot", {}, "Yahoo 行情快照", True, False),
-    ("query_market_bars", {"range": "1y"}, "近一年日线价格与成交量", True, False),
+    ("query_market_snapshot", {}, "Yahoo market snapshot", True, False),
+    ("query_market_bars", {"range": "1y"}, "One-year daily price and volume", True, False),
 ]
 _CRYPTO_DOSSIER_SPEC: list[tuple[str, dict, str, bool, bool]] = [
-    ("query_crypto_snapshot", {}, "Coinbase 行情快照", True, False),
-    ("query_crypto_bars", {"range": "1y"}, "近一年 UTC 日线价格与成交量", True, False),
-    ("query_crypto_context", {}, "市值、供应量与全市场上下文", True, True),
+    ("query_crypto_snapshot", {}, "Coinbase market snapshot", True, False),
+    ("query_crypto_bars", {"range": "1y"}, "One-year UTC daily price and volume", True, False),
+    ("query_crypto_context", {}, "Market cap, supply and market-wide context", True, True),
 ]
-_US_FUNDAMENTAL_SPEC = ("query_global_stock", {}, "关键财务指标（现有海外源）", True, False)
+_US_FUNDAMENTAL_SPEC = ("query_global_stock", {}, "Key financial metrics (available international source)", True, False)
 _MARKET_EVENT_SPEC: list[tuple[str, dict, str, bool, bool]] = [
-    ("query_market_news", {"days": 30}, "近期公司新闻（Finnhub trial）", True, True),
-    ("query_market_earnings", {}, "历史盈利与预期差（Finnhub trial）", True, True),
+    ("query_market_news", {"days": 30}, "Recent company news (Finnhub trial)", True, True),
+    ("query_market_earnings", {}, "Historical earnings and estimate surprises (Finnhub trial)", True, True),
 ]
 _US_SEC_SPEC: list[tuple[str, dict, str, bool, bool]] = [
-    ("query_us_sec_facts", {}, "SEC 最新 XBRL 公司事实", True, False),
-    ("query_us_filings", {}, "SEC 近期监管文件", True, True),
+    ("query_us_sec_facts", {}, "Latest SEC XBRL company facts", True, False),
+    ("query_us_filings", {}, "Recent SEC filings", True, True),
 ]
 
 
@@ -85,13 +85,13 @@ def _dossier_spec(symbol: str, asset_type: str = "equity") -> list[tuple[str, di
 
 def _known_market_gaps(symbol: str, asset_type: str = "equity") -> list[str]:
     if asset_type == "crypto":
-        return ["传统公司基本面与估值不适用", "监管文件与 earnings 不适用", "链上资金流与代币解锁数据未接入"]
+        return ["Traditional company fundamentals and valuation do not apply", "Filings and earnings do not apply", "On-chain flows and token unlock data are not integrated"]
     if symbol.isdigit() and len(symbol) == 6:
         return []
     resolved = market_data.resolve_symbol(symbol)
-    common = ["分析师长期一致预期（数据源未接入）"]
+    common = ["Long-term analyst consensus (source not integrated)"]
     if resolved.exchange.country != "US":
-        common[:0] = ["财务与估值指标（欧洲数据源未接入）", "公司公告/监管文件（欧洲统一源未接入）"]
+        common[:0] = ["Financial and valuation metrics (European source not integrated)", "Company announcements and filings (unified European source not integrated)"]
     return common
 
 _SECTION_CAP = 1800  # 单个小节注入上限，防止某项数据把整份底稿撑爆
@@ -103,7 +103,7 @@ _META_KEYS = {"period", "unit", "note", "code", "generated_at", "tracks", "total
 
 # 注意措辞：这类项返回空时，代码分不出「真的没有这类事件」还是「数据源临时不可用」，
 # 所以不能断言「确实没有」——如实说明两种可能，并要求不得臆测。
-NO_RECORD = "（未取到任何记录：可能确实没有此类事件，也可能是该数据源暂时不可用。两种情况都不得据此推断。）"
+NO_RECORD = "(No records were returned. The event may not exist or the source may be temporarily unavailable; do not infer either case.)"
 
 
 def _payload_empty(value) -> bool:
@@ -252,70 +252,78 @@ def build_dossier(code: str, asset_type: str = "equity") -> dict:
 
 def dossier_text(dossier: dict) -> str:
     """把底稿渲染成给模型看的纯文本。"""
-    parts = [f"【客观事实底稿 · {dossier['code']}】", "以下全部为接口实时拉取的客观数据，不含任何观点：", ""]
+    parts = [f"Objective evidence dossier · {dossier['code']}", "All content below is objective API data and contains no opinion:", ""]
     for s in dossier["sections"]:
         data = s["data"]
         # 「无记录」这类说明是给模型读的自然语言，别再套一层 JSON 引号
         body = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)[:_SECTION_CAP]
-        parts.append(f"## {s['title']}（来源工具 {s['tool']}）\n{body}\n")
+        parts.append(f"## {s['title']} (source tool: {s['tool']})\n{body}\n")
     if dossier["missing"]:
-        parts.append(f"## 数据缺口\n以下数据本次未取到，立论时不得臆测：{('、'.join(dossier['missing']))}")
+        parts.append(f"## Data gaps\nThe following data was unavailable and must not be inferred: {(', '.join(dossier['missing']))}")
     return "\n".join(parts)
 
 
 _COMMON_RULES = """
-共同规则（必须遵守）：
-- 只能使用底稿里的数据立论。底稿没有的数字一律不许编，需要但缺失的，明确写「该数据缺失」。
-- 每条论点都要标出所依据的具体数据（写清数值），没有数据支撑的直觉判断要标注「无数据支撑」。
-- 不预测股价涨跌与具体价位、不给买卖时机、不给目标价、不给仓位建议、不承诺收益。
-- 用简洁中文，条目化输出。
+Shared rules (mandatory):
+- Use only dossier data. Never invent a number that is absent; state "data unavailable" when required evidence is missing.
+- Attach the specific supporting data and value to every argument. Label unsupported intuition as "not supported by data".
+- Do not predict price direction or levels, suggest timing, give target prices or position sizes, or promise returns.
+- Write concisely in the runtime-selected output language and use bullets.
 """
 
 _ROLE_PROMPTS = {
-    "bull": """你是一名**多方研究员**。基于底稿，找出支持这个标的投资逻辑的客观证据，尽可能有力地立论。
-输出格式：
-1. **核心论点**（一句话）
-2. **支撑证据**（3-5 条，每条：论据 + 依据的具体数据）
-3. **这套逻辑成立的前提**（列出你的论点依赖哪些条件继续成立）
+    "bull": """You are the **bull researcher**. Build the strongest evidence-based case supported by the dossier.
+Output:
+1. **Core argument** (one sentence)
+2. **Supporting evidence** (3-5 items, each pairing the claim with specific data)
+3. **Conditions required** (conditions that must continue to hold)
 """ + _COMMON_RULES,
 
-    "bear": """你是一名**空方研究员**。基于底稿，找出这个标的在价格结构、估值或市场环境上的风险与疑点，尽可能有力地质疑。
-输出格式：
-1. **核心质疑**（一句话）
-2. **风险证据**（3-5 条，每条：疑点 + 依据的具体数据）
-3. **这套逻辑成立的前提**（列出你的质疑依赖哪些条件继续成立）
+    "bear": """You are the **bear researcher**. Build the strongest evidence-based challenge around price structure, valuation and market conditions.
+Output:
+1. **Core challenge** (one sentence)
+2. **Risk evidence** (3-5 items, each pairing the concern with specific data)
+3. **Conditions required** (conditions on which the challenge depends)
 """ + _COMMON_RULES,
 
-    "bull_rebut": """你是那名**多方研究员**。上面是空方的质疑。逐条回应：哪些质疑你承认（承认就明说），
-哪些你认为有数据可以反驳（给出数据），哪些属于双方都没有数据、只能存疑。不要重复第一轮的论述。
+    "bull_rebut": """You are the **bull researcher**. Respond to the bear case item by item: explicitly concede valid points,
+rebut only where data supports it, and mark issues where neither side has enough evidence. Do not repeat the first-round case.
 """ + _COMMON_RULES,
 
-    "bear_rebut": """你是那名**空方研究员**。上面是多方的论述。逐条回应：哪些论点你承认，
-哪些你认为有数据可以反驳（给出数据），哪些属于双方都没有数据、只能存疑。不要重复第一轮的质疑。
+    "bear_rebut": """You are the **bear researcher**. Respond to the bull case item by item: explicitly concede valid points,
+rebut only where data supports it, and mark issues where neither side has enough evidence. Do not repeat the first-round case.
 """ + _COMMON_RULES,
 
-    "referee": """你是**中立主持人**。你的任务不是裁决谁对谁错，更不是给出投资建议，而是把这场辩论的价值沉淀下来。
+    "referee": """You are the **neutral moderator**. Do not decide who is right and do not give investment advice. Preserve the debate's research value.
 
-输出格式：
-1. **双方共识**（多空都认可的事实，2-4 条）
-2. **真正的分歧点**（3-5 条，每条写清：多方认为什么 / 空方认为什么 / **分歧的根源是数据不足还是对同一数据的解读不同**）
-3. **验证清单**（针对每个分歧点，写清「要判定这条分歧，需要观察什么数据、去哪里看、什么时候能看到」）
-4. **数据缺口**（这场讨论里缺了什么关键信息）
+Output:
+1. **Shared ground** (2-4 facts accepted by both sides)
+2. **Real disagreements** (3-5 items: bull view / bear view / whether the root is missing data or different interpretation)
+3. **Verification checklist** (what data would resolve each disagreement, where to find it, and when it should become available)
+4. **Data gaps** (important missing information)
 
-硬性要求：
-- **绝对不要**给出结论倾向、买卖建议、目标价、评级或「更认同哪一方」的表述。
-- 你的产出应当让读者自己有能力去继续验证，而不是替读者做决定。
-- 用简洁中文。
+Mandatory:
+- Never express a directional conclusion, recommendation, target price, rating, or preference for either side.
+- Enable the reader to verify the claims rather than deciding for them.
+- Write concisely in the runtime-selected output language.
 """,
 }
 
 _STAGE_LABEL = {
-    "bull": "多方研究员",
-    "bear": "空方研究员",
-    "bull_rebut": "多方反驳",
-    "bear_rebut": "空方反驳",
-    "referee": "中立主持 · 分歧与验证清单",
+    "bull": "Bull researcher",
+    "bear": "Bear researcher",
+    "bull_rebut": "Bull rebuttal",
+    "bear_rebut": "Bear rebuttal",
+    "referee": "Neutral moderator · disagreements and verification",
 }
+_STAGE_LABEL_ZH = {
+    "bull": "多方研究员", "bear": "空方研究员", "bull_rebut": "多方反驳",
+    "bear_rebut": "空方反驳", "referee": "中立主持 · 分歧与验证清单",
+}
+
+
+def _stage_label(stage: str, cfg: dict) -> str:
+    return chat.localized_text(cfg, _STAGE_LABEL[stage], _STAGE_LABEL_ZH[stage])
 
 
 def _stage_plan(rounds: int) -> list[str]:
@@ -331,14 +339,14 @@ def _build_messages(stage: str, facts: str, transcript: list[dict], supplemental
     for t in transcript:
         if stage == "bull" or (stage == "bear" and t["stage"] != "bull"):
             continue  # 首轮陈述：多方不看任何人，空方只看多方
-        user_parts.append(f"【{_STAGE_LABEL[t['stage']]}的发言】\n{t['content']}")
+        user_parts.append(f"Statement from {_STAGE_LABEL[t['stage']]}:\n{t['content']}")
     if supplemental:
         user_parts.append(supplemental)
     if not user_parts:
         return [{"role": "system", "content": system},
-                {"role": "user", "content": "请基于底稿开始你的陈述。"}]
+                {"role": "user", "content": "Begin your statement using the dossier."}]
     return [{"role": "system", "content": system},
-            {"role": "user", "content": "\n\n".join(user_parts) + "\n\n请按你的角色要求输出。"}]
+            {"role": "user", "content": "\n\n".join(user_parts) + "\n\nRespond according to your assigned role."}]
 
 
 def run_debate_stream(
@@ -356,12 +364,12 @@ def run_debate_stream(
     provider = str(cfg.get("provider", ""))
     is_cli = provider.startswith("cli-")
 
-    yield {"type": "status", "message": "正在拉取客观事实底稿…"}
+    yield {"type": "status", "message": chat.localized_text(cfg, "Retrieving the objective evidence dossier…", "正在拉取客观事实底稿…")}
     dossier = yield from collect_dossier(code, asset_type)
     # 只有「无记录」说明、没有一条真实数据时同样算取数失败——
     # 让多空基于一份全是「未取到」的底稿互相质疑毫无意义。
     if not any(not isinstance(s["data"], str) for s in dossier["sections"]):
-        yield {"type": "error", "message": "未能取到任何客观数据，无法开始辩论（请检查代码是否正确、网络是否可达）"}
+        yield {"type": "error", "message": chat.localized_text(cfg, "No objective data was available, so the debate cannot start. Check the symbol and network connection.", "未能取到任何客观数据，无法开始辩论（请检查代码是否正确、网络是否可达）")}
         return
     yield {"type": "dossier",
            "sections": [{"title": s["title"], "tool": s["tool"]} for s in dossier["sections"]],
@@ -372,12 +380,14 @@ def run_debate_stream(
     transcript: list[dict] = []
 
     for stage in _stage_plan(rounds):
-        yield {"type": "stage", "stage": stage, "label": _STAGE_LABEL[stage]}
+        label = _stage_label(stage, cfg)
+        yield {"type": "stage", "stage": stage, "label": label}
         messages = _build_messages(stage, facts, transcript, supplemental)
         buf: list[str] = []
         try:
             if is_cli:
-                content = cli_runtime.run_cli(provider[4:], messages[0]["content"], messages[-1]["content"])
+                system = f"{messages[0]['content']}\n\n{chat.output_language_instruction(cfg)}"
+                content = cli_runtime.run_cli(provider[4:], system, messages[-1]["content"])
                 buf.append(content)
                 yield {"type": "delta", "stage": stage, "text": content}
             else:
@@ -392,13 +402,14 @@ def run_debate_stream(
             # 必须补一个终态事件：前端按 stage_done 把该角色标记为完成，
             # 只发 error 的话这个角色会永远停在「生成中…」，并让「全部完成」判定不成立、
             # 连带后面能正常跑完的角色也存不进沉淀。
-            yield {"type": "error", "stage": stage, "message": f"{_STAGE_LABEL[stage]}生成失败：{e}"}
-            yield {"type": "stage_done", "stage": stage, "label": _STAGE_LABEL[stage],
-                   "content": f"（本角色生成失败：{e}）", "failed": True}
+            message = chat.localized_text(cfg, f"{label} failed: {e}", f"{label}生成失败：{e}")
+            yield {"type": "error", "stage": stage, "message": message}
+            yield {"type": "stage_done", "stage": stage, "label": label,
+                   "content": message, "failed": True}
             continue  # 失败内容不进 transcript——不能把错误信息当论据喂给后面的角色
 
         content = "".join(buf).strip()
         transcript.append({"stage": stage, "content": content})
-        yield {"type": "stage_done", "stage": stage, "label": _STAGE_LABEL[stage], "content": content}
+        yield {"type": "stage_done", "stage": stage, "label": label, "content": content}
 
     yield {"type": "done", "code": code, "stages": transcript}

@@ -5,11 +5,11 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Disclaimer } from "@/components/ui/Disclaimer";
 import { api, ApiError, downloadReport, type MyReport } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
 
 const fmtSize = (b: number) =>
   b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(0)}KB` : `${(b / 1048576).toFixed(1)}MB`;
-const fmtDate = (ts: number) =>
-  new Date(ts).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+const INDUSTRY_EN: Record<string, string> = { "人形机器人": "Humanoid Robotics", "光互联": "Optical Interconnects", "HBM存储": "HBM Memory", "AI算力": "AI Compute", "半导体": "Semiconductors", "新能源": "New Energy", "创新药": "Innovative Medicines", "商业航天": "Commercial Space", "电力电网": "Power Grid", "未分类": "Uncategorised" };
 
 // 读文件为 dataURL（含 base64）；后端会剥掉 data: 前缀。
 const fileToB64 = (file: File): Promise<string> =>
@@ -21,6 +21,7 @@ const fileToB64 = (file: File): Promise<string> =>
   });
 
 export function MyReports() {
+  const { locale, tr } = useLocale();
   const [reports, setReports] = useState<MyReport[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -31,7 +32,7 @@ export function MyReports() {
     try {
       setReports(await api.myReports());
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "加载研报列表失败");
+      setErr(e instanceof ApiError ? e.message : tr("Unable to load research reports", "加载研报列表失败"));
     }
   };
   useEffect(() => {
@@ -48,19 +49,19 @@ export function MyReports() {
       }
       await load();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "上传失败");
+      setErr(e instanceof ApiError ? e.message : tr("Upload failed", "上传失败"));
     } finally {
       setBusy(false);
     }
   };
 
   const remove = async (r: MyReport) => {
-    if (!confirm(`删除「${r.name}」？（同时从本地归档目录移除）`)) return;
+    if (!confirm(tr(`Delete “${r.name}” from the local archive?`, `删除「${r.name}」？（同时从本地归档目录移除）`))) return;
     try {
       await api.deleteReport(r.id);
       await load();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "删除失败");
+      setErr(e instanceof ApiError ? e.message : tr("Delete failed", "删除失败"));
     }
   };
 
@@ -68,7 +69,7 @@ export function MyReports() {
     try {
       await downloadReport(r.id, r.name);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "下载失败");
+      setErr(e instanceof ApiError ? e.message : tr("Download failed", "下载失败"));
     }
   };
 
@@ -84,8 +85,8 @@ export function MyReports() {
   return (
     <div>
       <PageHeader
-        title="我的研报"
-        subtitle="把自己的研报拖进来归档，自动按行业分类。文件只存在本地部署目录、不上传、不进任何仓库。"
+        title={tr("My Research", "我的研报")}
+        subtitle={tr("Archive your own reports with automatic industry classification. Files remain in the local deployment directory.", "把自己的研报拖进来归档，自动按行业分类。文件只存在本地部署目录、不上传、不进任何仓库。")}
       />
 
       {/* 上传区 */}
@@ -113,10 +114,10 @@ export function MyReports() {
             <Upload className="h-7 w-7 text-primary" />
           )}
           <p className="text-sm font-medium">
-            {busy ? "上传中…" : "把研报拖到这里，或点击选择文件"}
+            {busy ? tr("Uploading…", "上传中…") : tr("Drop reports here or click to choose files", "把研报拖到这里，或点击选择文件")}
           </p>
           <p className="text-xs text-muted-foreground/70">
-            支持 PDF / Word / txt / md / 表格 / 图片，单个 ≤ 25MB，可一次多选
+            {tr("PDF, Word, TXT, Markdown, spreadsheets and images · 25 MB per file · Multiple selection supported", "支持 PDF / Word / txt / md / 表格 / 图片，单个 ≤ 25MB，可一次多选")}
           </p>
           <input
             ref={inputRef}
@@ -143,7 +144,7 @@ export function MyReports() {
         <GlassCard>
           <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-muted-foreground">
             <FolderOpen className="h-8 w-8 text-muted-foreground/40" />
-            还没有归档的研报。把你收集的研报拖进上面的框，会自动按行业分好类。
+            {tr("No archived research yet. Drop reports above to classify them automatically.", "还没有归档的研报。把你收集的研报拖进上面的框，会自动按行业分好类。")}
           </div>
         </GlassCard>
       ) : (
@@ -151,8 +152,8 @@ export function MyReports() {
           {grouped.map(([industry, items]) => (
             <GlassCard key={industry}>
               <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                <span className="rounded bg-primary/15 px-2 py-0.5 text-xs text-primary">{industry}</span>
-                <span className="text-xs font-normal text-muted-foreground">{items.length} 份</span>
+                <span className="rounded bg-primary/15 px-2 py-0.5 text-xs text-primary">{locale === "zh-CN" ? industry : (INDUSTRY_EN[industry] || industry)}</span>
+                <span className="text-xs font-normal text-muted-foreground">{items.length} {tr("reports", "份")}</span>
               </h3>
               <div className="divide-y divide-border/30">
                 {items.map((r) => (
@@ -161,20 +162,20 @@ export function MyReports() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{r.name}</p>
                       <p className="text-[11px] text-muted-foreground/60">
-                        {fmtSize(r.size)} · {fmtDate(r.ts)}
+                        {fmtSize(r.size)} · {new Date(r.ts).toLocaleDateString(locale, { year: "numeric", month: "2-digit", day: "2-digit" })}
                       </p>
                     </div>
                     <button
                       onClick={() => download(r)}
                       className="shrink-0 text-muted-foreground/60 hover:text-primary"
-                      title="下载"
+                      title={tr("Download", "下载")}
                     >
                       <Download className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => remove(r)}
                       className="shrink-0 text-muted-foreground/50 hover:text-destructive"
-                      title="删除"
+                      title={tr("Delete", "删除")}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
