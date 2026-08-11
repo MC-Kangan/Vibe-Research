@@ -129,6 +129,89 @@ Vibe-Research/
 └── frontend/          Vite + React 19 + TS + Tailwind :5899
 ```
 
+### Runtime architecture and TradeAgent boundary
+
+```mermaid
+flowchart LR
+    User["User in the React dashboard"]
+
+    subgraph VR["Vibe Research · product and orchestration"]
+        UI["Dashboards and AI conversation UI<br/>React · Vite · :5899"]
+        API["FastAPI routes<br/>backend/app.py · :8900"]
+        Data["Market-data normalization<br/>astock · gstock · market_data · newsradar"]
+        AI["Controlled AI workflows<br/>chat · debate · research_team · reflection"]
+        Tools["Read-only tool registry and factual dossier<br/>tools.py · ai_workflows.py"]
+        Positions["Position service<br/>IBKR Flex · Coinbase · manual records"]
+        Ledger["Local state<br/>JSON snapshots · SQLite ledger/analytics · reports"]
+        Bridge["Skills bridge<br/>research.py<br/>allowlist + instrument/OHLCV contract"]
+    end
+
+    subgraph Sources["External data and account sources"]
+        Public["Tencent · Eastmoney · Yahoo<br/>Finnhub · SEC · RSS<br/>Coinbase · CoinGecko"]
+        Broker["IBKR Flex<br/>read-only reports"]
+        Wallet["Coinbase account<br/>and manual wallets"]
+    end
+
+    subgraph TA["Sibling TradeAgent repository · deterministic analytics only"]
+        TAHTTP["Authenticated FastAPI<br/>/skills and /skills/name/run"]
+        App["ResearchApplication + ResearchEngine"]
+        Registry["Frozen SkillRegistry<br/>worth-buy-stocks · markov-method<br/>technical-basic · risk-analysis<br/>volatility-regime"]
+        Inline["InlinePriceProvider<br/>validates bounded OHLCV + provenance"]
+        Report["Sanitized, auditable ResearchReport<br/>full / partial status"]
+    end
+
+    subgraph Models["User-configured model runtime"]
+        ModelAPI["OpenAI-compatible API<br/>controlled function calling"]
+        ModelCLI["Local Codex / Claude CLI<br/>context-only mode"]
+    end
+
+    VibeTrading["HKUDS/Vibe-Trading<br/>UI design inspiration only<br/>no runtime or code dependency"]
+
+    User --> UI --> API
+    Public --> Data
+    API --> Data --> UI
+    API --> AI
+    AI <--> Tools
+    Tools --> Data
+    AI <--> ModelAPI
+    AI <--> ModelCLI
+    AI --> UI
+
+    Broker --> Positions
+    Wallet --> Positions
+    API --> Positions <--> Ledger
+    Positions --> UI
+    Positions -. "explicit user action" .-> AI
+
+    Data --> Bridge
+    API --> Bridge
+    Bridge -- "symbol + market + up to 520 daily OHLCV bars" --> TAHTTP
+    TAHTTP --> App --> Registry
+    App --> Inline
+    Registry --> Report
+    Inline --> Report
+    Report -- "sanitized JSON report" --> Bridge
+    Bridge --> UI
+    Bridge -. "compact deterministic evidence" .-> Tools
+    VibeTrading -. "visual reference" .-> UI
+```
+
+| Concern | Owner and data flow |
+|---|---|
+| Data sources | Vibe adapters fetch public/account data and normalize provider-specific responses before dashboards, tools, or skills consume them. Missing coverage stays explicit. |
+| AI conversation | Vibe selects a fixed workflow, limits the available read-only tools and rounds, builds a factual dossier, and streams the configured API/CLI model's response back to the UI. |
+| Analysis dashboards | React pages request typed FastAPI endpoints and render charts, tables, source gaps, deterministic skill reports, and optional AI explanations. |
+| Positions | Vibe imports IBKR Flex and Coinbase read-only data, combines optional manual records, and keeps snapshots and analytics locally. Holdings are never sent to TradeAgent. They enter AI context only after an explicit user action: the Portfolio AI button sends the displayed portfolio, while research-team mode sends one selected position. |
+| Skills | Vibe owns symbol resolution and OHLCV preparation. TradeAgent validates the bounded request, runs immutable deterministic skills, and returns an auditable full/partial report. It has no broker, order, position, or LLM responsibility. |
+
+The dependency direction is intentionally one-way: **Vibe Research may call
+TradeAgent, but TradeAgent does not call back into Vibe Research**. This keeps
+the reusable analytics engine independent of the product UI, personal data,
+broker connections, and model provider. AI workflows may quote compact skill
+results as evidence, but they cannot change skill calculations or submit orders.
+The similarly named `HKUDS/Vibe-Trading` project is not this sibling service:
+Vibe Research credits its visual language only and does not import or call it.
+
 **Tiered dependencies**: quotes (Tencent) and reports/filings (Eastmoney) work with a minimal install. `akshare` / `mootdx` are imported lazily — if missing, only those endpoints return 501 with an install hint; the service still runs.
 
 ## Quick Start

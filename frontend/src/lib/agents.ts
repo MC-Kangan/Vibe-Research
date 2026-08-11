@@ -2,7 +2,7 @@
 // 两者都走后端 NDJSON 流；模型配置沿用「接入 AI」里存的那一份（用户自己的 key / 本机 CLI）。
 
 import { ApiError } from "@/lib/api";
-import { loadLlm } from "@/lib/llm";
+import { apiCredentialsAllowedOnOrigin, loadLlm } from "@/lib/llm";
 import { streamNdjson, type NdjsonEvent } from "@/lib/ndjson";
 import { getLocale, translate } from "@/lib/i18n";
 
@@ -24,6 +24,13 @@ export interface DebateHandlers {
 function requireLlm() {
   const llm = loadLlm();
   if (!llm) throw new ApiError(translate(getLocale(), "AI is not configured. Open AI Setup first.", "尚未接入 AI，请先在「接入 AI」里配置"), 400);
+  if (!llm.provider.startsWith("cli-") && !apiCredentialsAllowedOnOrigin()) {
+    throw new ApiError(translate(
+      getLocale(),
+      "API mode requires HTTPS on a LAN address because your model key would otherwise cross the network unencrypted. Use HTTPS or local CLI mode.",
+      "局域网地址使用 API 模式必须启用 HTTPS，否则模型密钥会以明文经过网络。请启用 HTTPS 或改用本机 CLI 模式。",
+    ), 400);
+  }
   return llm;
 }
 

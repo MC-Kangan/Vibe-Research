@@ -133,6 +133,88 @@ Vibe-Research/
 └── frontend/          Vite + React 19 + TS + Tailwind（玻璃暖橙主题）:5899
 ```
 
+### 运行时架构与 TradeAgent 边界
+
+```mermaid
+flowchart LR
+    User["用户 · React 仪表盘"]
+
+    subgraph VR["Vibe Research · 产品与编排层"]
+        UI["数据仪表盘与 AI 对话 UI<br/>React · Vite · :5899"]
+        API["FastAPI 路由<br/>backend/app.py · :8900"]
+        Data["市场数据归一化<br/>astock · gstock · market_data · newsradar"]
+        AI["受控 AI 工作流<br/>chat · debate · research_team · reflection"]
+        Tools["只读工具注册表与事实底稿<br/>tools.py · ai_workflows.py"]
+        Positions["持仓服务<br/>IBKR Flex · Coinbase · 手工记录"]
+        Ledger["本地状态<br/>JSON 快照 · SQLite 台账/分析 · 报告"]
+        Bridge["Skills 桥接层<br/>research.py<br/>白名单 + 标的/OHLCV 合约"]
+    end
+
+    subgraph Sources["外部数据与账户源"]
+        Public["腾讯 · 东财 · Yahoo<br/>Finnhub · SEC · RSS<br/>Coinbase · CoinGecko"]
+        Broker["IBKR Flex<br/>只读报表"]
+        Wallet["Coinbase 账户<br/>与手工钱包"]
+    end
+
+    subgraph TA["同级 TradeAgent 仓库 · 仅确定性分析"]
+        TAHTTP["带鉴权的 FastAPI<br/>/skills 与 /skills/name/run"]
+        App["ResearchApplication + ResearchEngine"]
+        Registry["冻结的 SkillRegistry<br/>worth-buy-stocks · markov-method<br/>technical-basic · risk-analysis<br/>volatility-regime"]
+        Inline["InlinePriceProvider<br/>校验有界 OHLCV 与数据来源"]
+        Report["经清洗、可审计的 ResearchReport<br/>full / partial 状态"]
+    end
+
+    subgraph Models["用户配置的模型运行时"]
+        ModelAPI["OpenAI 兼容 API<br/>受控 function calling"]
+        ModelCLI["本机 Codex / Claude CLI<br/>仅上下文模式"]
+    end
+
+    VibeTrading["HKUDS/Vibe-Trading<br/>仅作 UI 设计参考<br/>无运行时或代码依赖"]
+
+    User --> UI --> API
+    Public --> Data
+    API --> Data --> UI
+    API --> AI
+    AI <--> Tools
+    Tools --> Data
+    AI <--> ModelAPI
+    AI <--> ModelCLI
+    AI --> UI
+
+    Broker --> Positions
+    Wallet --> Positions
+    API --> Positions <--> Ledger
+    Positions --> UI
+    Positions -. "用户显式操作" .-> AI
+
+    Data --> Bridge
+    API --> Bridge
+    Bridge -- "symbol + market + 最多 520 根日线 OHLCV" --> TAHTTP
+    TAHTTP --> App --> Registry
+    App --> Inline
+    Registry --> Report
+    Inline --> Report
+    Report -- "经清洗的 JSON 报告" --> Bridge
+    Bridge --> UI
+    Bridge -. "压缩后的确定性证据" .-> Tools
+    VibeTrading -. "视觉参考" .-> UI
+```
+
+| 关注点 | 责任归属与数据流 |
+|---|---|
+| 数据源 | Vibe 的适配器读取公开数据和账户数据，先将各供应商响应归一化，再交给仪表盘、AI 工具或 Skills；缺失覆盖会明确展示。 |
+| AI 对话 | Vibe 选择固定工作流，限制可用的只读工具和轮次，构建事实底稿，再把用户配置的 API / CLI 模型输出流式返回 UI。 |
+| 分析仪表盘 | React 页面请求类型化 FastAPI 端点，展示图表、表格、数据缺口、确定性 Skill 报告与可选 AI 解读。 |
+| 持仓 | Vibe 只读导入 IBKR Flex 和 Coinbase，合并可选手工记录，并在本地保存快照与分析。持仓不会发给 TradeAgent。只有用户显式操作后才会进入 AI 上下文：持仓页 AI 按钮会发送当前展示的组合，研究团队模式只发送一个选中持仓。 |
+| Skills | Vibe 负责标的代码解析与 OHLCV 准备；TradeAgent 校验有界请求，运行不可在运行时修改的确定性 Skills，返回可审计的 full / partial 报告。它不负责经纪商、订单、持仓或 LLM。 |
+
+依赖方向刻意保持单向：**Vibe Research 可以调用 TradeAgent，但
+TradeAgent 不会回调 Vibe Research**。因此，可复用的分析引擎与产品 UI、
+个人数据、经纪商连接和模型供应商保持解耦。AI 工作流可以引用经压缩的
+Skill 结果作为证据，但无法修改 Skill 计算，也无法提交订单。名称相似的
+`HKUDS/Vibe-Trading` 并不是这个同级服务：Vibe Research 只参考其视觉语言，
+没有导入或调用它。
+
 **分级依赖**：行情（腾讯）+ 研报 / 公告（东财）**秒装可用**；akshare / mootdx 惰性导入，缺失时对应端点返回 501 + 安装提示，不拖垮服务。
 
 ## 快速开始

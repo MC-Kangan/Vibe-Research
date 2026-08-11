@@ -213,7 +213,7 @@ def _has_attr(node: Any, *keys: str) -> bool:
     return any(key in getattr(node, "attrib", {}) and str(node.attrib[key]).strip() for key in keys)
 
 
-def _parse_datetime(node: Any) -> str:
+def _parse_datetime(node: Any) -> str | None:
     value = _attr(node, "dateTime", "tradeDate", "reportDate")
     timezone_name = _env("VR_IBKR_FLEX_TIMEZONE", "Europe/London")
     try:
@@ -225,7 +225,7 @@ def _parse_datetime(node: Any) -> str:
             return datetime.strptime(value, pattern).replace(tzinfo=local_zone).astimezone(UTC).isoformat().replace("+00:00", "Z")
         except ValueError:
             continue
-    return _now()
+    return None
 
 
 def _parse_date(value: str, fallback: date | None = None) -> str | None:
@@ -304,6 +304,9 @@ def _parse_current_trades(root: Any) -> list[dict[str, Any]]:
         if side not in {"BUY", "SELL"}:
             continue
         occurred_at = _parse_datetime(node)
+        if occurred_at is None:
+            LOGGER.warning("[ibkr-analytics] skipped trade with invalid timestamp external_id=%s", external_id)
+            continue
         return_key = f"ibkr-flex:{account_id}:{external_id}"
         trades.append({
             "trade_key": hashlib.sha256(return_key.encode()).hexdigest(),

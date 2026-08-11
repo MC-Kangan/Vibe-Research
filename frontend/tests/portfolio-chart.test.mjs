@@ -50,3 +50,11 @@ test("performance is labelled as flow-adjusted and exposes missing coverage", ()
   assert.match(source, /资金流调整回报/);
   assert.match(source, /回报暂不可用/);
 });
+
+test("allocation weights cover the whole portfolio and group smaller positions", () => {
+  assert.match(source, /const valued = positions\.filter\(\(item\) => item\.reporting_market_value != null\);/);
+  assert.match(source, /const grossExposure = valued\.reduce/);
+  assert.match(source, /const otherExposure = ranked\.slice\(7\)\.reduce/);
+  assert.match(source, /label: "__OTHER__"/);
+  assert.doesNotMatch(source, /reporting_market_value != null\)\.slice\(0, 8\)/);
+});

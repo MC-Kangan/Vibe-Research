@@ -3,7 +3,7 @@ import { KeyRound, Sparkles, ShieldCheck, Check, Trash2, Terminal } from "lucide
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { toast } from "sonner";
-import { loadLlm, saveLlm, clearLlm } from "@/lib/llm";
+import { apiCredentialsAllowedOnOrigin, loadLlm, saveLlm, clearLlm } from "@/lib/llm";
 import { api, loadAccessKey, saveAccessKey, type DataSourceStatus } from "@/lib/api";
 import { subscriptionModels, apiModels, PROVIDER_BASE, isCliProvider, aiModels, type ProviderId } from "@/lib/ai-models";
 import { storageGet, storageSet } from "@/lib/storage";
@@ -41,6 +41,10 @@ export function Settings() {
   };
 
   const saveApi = () => {
+    if (!apiCredentialsAllowedOnOrigin()) {
+      toast.error(tr("API mode requires HTTPS on a LAN address. Use HTTPS or local CLI mode.", "局域网地址使用 API 模式必须启用 HTTPS；请启用 HTTPS 或改用本机 CLI 模式。"));
+      return;
+    }
     if (!baseURL.trim() || !apiKey.trim() || !modelName.trim()) {
       toast.error(tr("Complete Base URL, API Key and Model", "请填完 Base URL、API Key、Model"));
       return;
@@ -79,7 +83,7 @@ export function Settings() {
 
       <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-        <span>{tr("Your API key ", "API key ")}<b className="text-foreground">{tr("exists only in this browser", "只存在你本地浏览器")}</b>{tr(" and is sent to your backend only when you ask a question. It is never uploaded or committed. Your model produces the analysis.", "，仅在你提问时发给你自己的后端去调模型，不上传、不进仓库。所有分析由你的模型给出，本产品不校准。")}</span>
+        <span>{tr("Your API key ", "API key ")}<b className="text-foreground">{tr("exists only in this browser", "只存在你本地浏览器")}</b>{tr(" and is sent to your backend only when you ask a question. API mode is blocked on insecure LAN origins; use HTTPS or local CLI mode. It is never committed. Your model produces the analysis.", "，仅在你提问时发给你自己的后端去调模型。非安全的局域网地址会禁用 API 模式，请使用 HTTPS 或本机 CLI。密钥不会进入仓库，所有分析由你的模型给出。")}</span>
       </div>
 
       {/* 两种接入方式 */}

@@ -118,8 +118,8 @@ def _dossier_for(stage: str, dossier: dict) -> str:
 
 def _messages(stage: str, dossier: dict, supplemental: str, position: str) -> list[dict]:
     spec = SPECIALISTS[stage]
-    system = f"You are the team's {spec['label']}. Focus only on {spec['focus']}.\n{_COMMON}\n\n{_dossier_for(stage, dossier)}"
-    user = "Complete your specialist research."
+    system = f"You are the team's {spec['label']}. Focus only on {spec['focus']}.\n{_COMMON}"
+    user = f"{debate.dossier_prompt_text(_dossier_for(stage, dossier))}\n\nComplete your specialist research."
     if supplemental:
         user += f"\n\n{supplemental}"
     if position:

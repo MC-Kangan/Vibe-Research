@@ -329,7 +329,7 @@ def debate(req: DebateReq):
     try:
         contexts = research_context.normalize([item.model_dump() for item in req.additional_contexts])
     except research_context.ResearchContextError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, exc.localized(req.locale)) from exc
     return _ndjson(lambda: debate_layer.run_debate_stream(
         cfg, code, rounds, req.asset_type, contexts,
         list(dict.fromkeys(req.research_skills)), req.research_skill_parameters,
@@ -343,6 +343,7 @@ class ResearchFileIn(BaseModel):
 
 class ResearchFilesIn(BaseModel):
     files: list[ResearchFileIn] = Field(min_length=1, max_length=research_context.MAX_ITEMS)
+    locale: Literal["en", "zh-CN"] = "en"
 
 
 @app.post("/api/research-context/extract")
@@ -351,7 +352,7 @@ def research_context_extract(request: ResearchFilesIn):
     try:
         return {"data": research_context.extract_files([item.model_dump() for item in request.files])}
     except research_context.ResearchContextError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, exc.localized(request.locale)) from exc
 
 
 class ResearchTeamReq(BaseModel):
@@ -389,7 +390,7 @@ def research_team_run(request: ResearchTeamReq):
     try:
         contexts = research_context.normalize([item.model_dump() for item in request.additional_contexts])
     except research_context.ResearchContextError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, exc.localized(request.locale)) from exc
     cfg = _check_llm(request.llm, request.locale)
     response = _ndjson(lambda: research_team.run_stream(
         cfg, code, request.asset_type, contexts, position_text,

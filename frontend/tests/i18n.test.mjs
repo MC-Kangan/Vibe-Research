@@ -69,3 +69,19 @@ test("portfolio AI context remains canonical English", () => {
   assert.doesNotMatch(watchlist, /我的自选股（本地）/);
   assert.match(formatting, /Investment objectives and risk preferences/);
 });
+
+test("English financial amounts use millions instead of Chinese hundred-millions", () => {
+  const stockData = read("../src/pages/StockData.tsx");
+  assert.match(stockData, /v \/ 1e6/);
+  assert.match(stockData, /Million \$\{curOf\(market\)\}/);
+  assert.match(stockData, /val\.mcap_yi \* 100, " Million CNY"/);
+  assert.match(stockData, /locale === "en" \? 1e6 : 1e8/);
+});
+
+test("shared API failures and research uploads use the selected locale", () => {
+  const api = read("../src/lib/api.ts");
+  const backend = read("../../backend/app.py");
+  assert.match(api, /translate\(getLocale\(\), "Cannot reach the backend/);
+  assert.match(api, /files, locale: getLocale\(\)/);
+  assert.match(backend, /exc\.localized\(request\.locale\)/);
+});

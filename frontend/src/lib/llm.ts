@@ -53,6 +53,11 @@ export function hasLlm(): boolean {
   return loadLlm() !== null;
 }
 
+export function apiCredentialsAllowedOnOrigin(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.isSecureContext || ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 export interface ChatHandlers {
   onDelta?: (text: string) => void;             // 答案逐块吐字
   onTool?: (tool: string, args: Record<string, unknown>) => void; // AI 调了某数据工具
@@ -66,6 +71,13 @@ export async function chatStream(workflow: AiWorkflowId, messages: ChatMsg[], co
   const llm = loadLlm();
   const locale = getLocale();
   if (!llm) throw new ApiError(translate(locale, "AI is not configured. Open AI Setup first.", "尚未接入 AI，请先在「接入 AI」里配置"), 400);
+  if (!isCliProvider(llm.provider) && !apiCredentialsAllowedOnOrigin()) {
+    throw new ApiError(translate(
+      locale,
+      "API mode requires HTTPS on a LAN address because your model key would otherwise cross the network unencrypted. Use HTTPS or local CLI mode.",
+      "局域网地址使用 API 模式必须启用 HTTPS，否则模型密钥会以明文经过网络。请启用 HTTPS 或改用本机 CLI 模式。",
+    ), 400);
+  }
 
   let resp: Response;
   try {

@@ -24,7 +24,9 @@ import { cn } from "@/lib/utils";
 import { getLocale, useLocale } from "@/lib/i18n";
 
 // 金额格式化（后端资金单位：元 / 万元）
-const yi = (v: number) => `${(v / 1e8).toFixed(2)} ${getLocale() === "en" ? "hundred million CNY" : "亿"}`;
+const yi = (v: number) => getLocale() === "en"
+  ? `${(v / 1e6).toLocaleString("en-US", { maximumFractionDigits: 2 })} Million CNY`
+  : `${(v / 1e8).toFixed(2)} 亿`;
 
 const fmt = (v: number | null | undefined, suffix = "") =>
   v === null || v === undefined ? "—" : `${v}${suffix}`;
@@ -37,7 +39,9 @@ const pctStr = (p: number | null | undefined) => (p == null ? "—" : `${p > 0 ?
 const curOf = (market: string) => getLocale() === "en" ? (market === "HK" ? "HKD" : market === "KR" ? "KRW" : "USD") : (market === "HK" ? "港元" : market === "KR" ? "韩元" : "美元");
 const mktName = (m: string) => getLocale() === "en" ? (m === "HK" ? "Hong Kong stock" : m === "KR" ? "Korean stock" : "US stock") : (m === "HK" ? "港股" : m === "KR" ? "韩股" : "美股");
 const bigMoney = (v: number | null, market: string) =>
-  v == null ? "—" : v >= 1e12 ? `${(v / 1e12).toFixed(2)} 万亿${curOf(market)}` : `${(v / 1e8).toFixed(0)} 亿${curOf(market)}`;
+  v == null ? "—" : getLocale() === "en"
+    ? `${(v / 1e6).toLocaleString("en-US", { maximumFractionDigits: 2 })} Million ${curOf(market)}`
+    : v >= 1e12 ? `${(v / 1e12).toFixed(2)} 万亿${curOf(market)}` : `${(v / 1e8).toFixed(0)} 亿${curOf(market)}`;
 const round2 = (v: number | null | undefined, suffix = "") =>
   v == null ? "—" : `${Math.round(v * 100) / 100}${suffix}`;
 
@@ -265,7 +269,7 @@ export function StockData() {
     { k: tr("Price", "现价"), v: fmt(val.price) },
     { k: "PE(TTM)", v: fmt(val.pe_ttm) },
     { k: "PB", v: fmt(val.pb) },
-    { k: tr("Market cap", "总市值"), v: fmt(val.mcap_yi, tr(" hundred million CNY", " 亿")) },
+    { k: tr("Market cap", "总市值"), v: locale === "en" ? fmt(val.mcap_yi == null ? null : val.mcap_yi * 100, " Million CNY") : fmt(val.mcap_yi, " 亿") },
     { k: "26E EPS", v: fmt(val.eps_26e) },
     { k: tr("Forward PE", "前向PE"), v: fmt(val.pe_26e) },
     { k: "PEG", v: fmt(val.peg) },
@@ -273,7 +277,7 @@ export function StockData() {
   ] : [];
 
   const aiContext = val
-    ? `Stock: ${val.name} (${val.code})\nPrice ${val.price}; PE (TTM) ${val.pe_ttm}; PB ${val.pb}; market cap ${val.mcap_yi} hundred million CNY\n` +
+    ? `Stock: ${val.name} (${val.code})\nPrice ${val.price}; PE (TTM) ${val.pe_ttm}; PB ${val.pb}; market cap ${val.mcap_yi == null ? "—" : val.mcap_yi * 100} Million CNY\n` +
       `26E EPS ${val.eps_26e ?? "—"}; forward PE ${val.pe_26e ?? "—"}; PEG ${val.peg ?? "—"}; valuation digestion ${val.digest_years ?? "—"} years; ${val.analyst_count} institutions covering\n` +
       (pctl?.metrics.pe_ttm ? `Five-year valuation percentiles: PE-TTM ${pctl.metrics.pe_ttm.percentile}%; PB ${pctl.metrics.pb?.percentile ?? "—"}%\n` : "") +
       (fin?.revenue ? `Financials (${fin.period ?? "—"}): revenue ${fin.revenue} (YoY ${fin.revenue_yoy ?? "—"}); net income ${fin.net_profit ?? "—"} (YoY ${fin.net_profit_yoy ?? "—"}); ROE ${fin.roe ?? "—"}; gross margin ${fin.gross_margin ?? "—"}\n` : "") +
@@ -418,7 +422,7 @@ export function StockData() {
             <GlassCard className="mb-4">
               <h3 className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
                 <BarChart3 className="h-4 w-4 text-primary" /> {tr("Cash flow statement", "现金流量表")}
-                <span className="text-xs font-normal text-muted-foreground/60">· {tr("Unit: hundred million", "单位：亿")}{cashflow.currency ?? ""}</span>
+                <span className="text-xs font-normal text-muted-foreground/60">· {tr("Unit: Million ", "单位：亿")}{cashflow.currency ?? ""}</span>
               </h3>
               <p className="mb-3 text-[11px] text-muted-foreground/60">{tr("Eastmoney RPT_HKSK_FN_CASHFLOW · quarterly figures are year-to-date · negative cash outflows are shown in green.", "东财 RPT_HKSK_FN_CASHFLOW · 季度为年初至今累计 · 负数（现金流出）标绿。")}</p>
               <div className="overflow-x-auto">
@@ -439,7 +443,7 @@ export function StockData() {
                           const amt = p.items[it]?.amount ?? null;
                           return (
                             <td key={p.report_date} className={cn("px-2 py-1.5 text-right font-mono", amt != null && amt < 0 ? "text-success" : "")}>
-                              {amt == null ? "—" : (amt / 1e8).toFixed(1)}
+                              {amt == null ? "—" : (amt / (locale === "en" ? 1e6 : 1e8)).toFixed(1)}
                             </td>
                           );
                         })}
@@ -452,7 +456,7 @@ export function StockData() {
           )}
 
           <p className="text-xs text-muted-foreground/60">
-            美股 / 港股数据来自公开市场数据源 · 金额为原生币种 · 仅客观数据，不含买卖建议。
+            {tr("US and Hong Kong data comes from public market sources · Amounts use the native currency · Objective data only, not investment advice.", "美股 / 港股数据来自公开市场数据源 · 金额为原生币种 · 仅客观数据，不含买卖建议。")}
           </p>
         </>
       )}

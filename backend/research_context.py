@@ -27,6 +27,14 @@ _ALLOWED_EXTENSIONS = {*_TEXT_EXTENSIONS, ".pdf"}
 class ResearchContextError(ValueError):
     """Raised when transient research context violates the bounded contract."""
 
+    def __init__(self, english: str, chinese: str):
+        super().__init__(chinese)
+        self.english = english
+        self.chinese = chinese
+
+    def localized(self, locale: str) -> str:
+        return self.chinese if locale == "zh-CN" else self.english
+
 
 def _name(value: str) -> str:
     name = os.path.basename((value or "").replace("\\", "/")).strip()
@@ -38,11 +46,11 @@ def _decode_base64(value: str) -> bytes:
     try:
         payload = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise ResearchContextError("文件内容不是有效的 base64") from exc
+        raise ResearchContextError("The file content is not valid base64", "文件内容不是有效的 base64") from exc
     if not payload:
-        raise ResearchContextError("文件为空")
+        raise ResearchContextError("The file is empty", "文件为空")
     if len(payload) > MAX_FILE_BYTES:
-        raise ResearchContextError(f"文件超过 {MAX_FILE_BYTES // 1024 // 1024}MB 上限")
+        raise ResearchContextError(f"The file exceeds the {MAX_FILE_BYTES // 1024 // 1024} MB limit", f"文件超过 {MAX_FILE_BYTES // 1024 // 1024}MB 上限")
     return payload
 
 
@@ -50,21 +58,21 @@ def _extract_pdf(payload: bytes) -> tuple[str, int]:
     try:
         from pypdf import PdfReader
     except ImportError as exc:  # pragma: no cover - deployment/configuration failure
-        raise ResearchContextError("PDF 解析组件未安装，请安装后重试") from exc
+        raise ResearchContextError("The PDF parser is not installed", "PDF 解析组件未安装，请安装后重试") from exc
     try:
         reader = PdfReader(io.BytesIO(payload))
         if reader.is_encrypted:
-            raise ResearchContextError("暂不支持加密 PDF")
+            raise ResearchContextError("Encrypted PDFs are not supported", "暂不支持加密 PDF")
         pages = len(reader.pages)
         if pages > MAX_PDF_PAGES:
-            raise ResearchContextError(f"PDF 超过 {MAX_PDF_PAGES} 页上限")
+            raise ResearchContextError(f"The PDF exceeds the {MAX_PDF_PAGES}-page limit", f"PDF 超过 {MAX_PDF_PAGES} 页上限")
         text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
     except ResearchContextError:
         raise
     except Exception as exc:  # noqa: BLE001 - parser boundary
-        raise ResearchContextError("PDF 无法解析或文件已损坏") from exc
+        raise ResearchContextError("The PDF cannot be parsed or is damaged", "PDF 无法解析或文件已损坏") from exc
     if not text:
-        raise ResearchContextError("PDF 没有可提取文字；扫描件暂不支持 OCR")
+        raise ResearchContextError("The PDF contains no extractable text; scanned documents do not support OCR yet", "PDF 没有可提取文字；扫描件暂不支持 OCR")
     return text, pages
 
 
@@ -72,7 +80,7 @@ def extract_file(name: str, content_b64: str) -> dict[str, Any]:
     safe_name = _name(name)
     extension = os.path.splitext(safe_name)[1].lower()
     if extension not in _ALLOWED_EXTENSIONS:
-        raise ResearchContextError("仅支持 TXT、Markdown 和文字型 PDF")
+        raise ResearchContextError("Only TXT, Markdown, and text-based PDF files are supported", "仅支持 TXT、Markdown 和文字型 PDF")
     payload = _decode_base64(content_b64)
     pages = None
     if extension == ".pdf":
@@ -81,9 +89,9 @@ def extract_file(name: str, content_b64: str) -> dict[str, Any]:
         try:
             text = payload.decode("utf-8-sig").strip()
         except UnicodeDecodeError as exc:
-            raise ResearchContextError("文本文件必须使用 UTF-8 编码") from exc
+            raise ResearchContextError("Text files must use UTF-8 encoding", "文本文件必须使用 UTF-8 编码") from exc
         if not text:
-            raise ResearchContextError("文本文件没有可用内容")
+            raise ResearchContextError("The text file has no usable content", "文本文件没有可用内容")
     original_chars = len(text)
     truncated = original_chars > MAX_ITEM_CHARS
     return {
@@ -103,14 +111,14 @@ def extract_files(items: list[dict[str, str]]) -> list[dict[str, Any]]:
         encoded = item["content_b64"].split(",", 1)[1] if item["content_b64"].startswith("data:") and "," in item["content_b64"] else item["content_b64"]
         estimated_total += len(encoded) * 3 // 4
     if estimated_total > MAX_TOTAL_FILE_BYTES:
-        raise ResearchContextError(f"单次上传文件合计超过 {MAX_TOTAL_FILE_BYTES // 1024 // 1024}MB 上限")
+        raise ResearchContextError(f"The upload exceeds the {MAX_TOTAL_FILE_BYTES // 1024 // 1024} MB total limit", f"单次上传文件合计超过 {MAX_TOTAL_FILE_BYTES // 1024 // 1024}MB 上限")
     return [extract_file(item["name"], item["content_b64"]) for item in items]
 
 
 def normalize(items: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     values = items or []
     if len(values) > MAX_ITEMS:
-        raise ResearchContextError(f"补充材料最多 {MAX_ITEMS} 项")
+        raise ResearchContextError(f"A maximum of {MAX_ITEMS} supplemental items is allowed", f"补充材料最多 {MAX_ITEMS} 项")
     normalized: list[dict[str, str]] = []
     total = 0
     for item in values:
@@ -119,10 +127,10 @@ def normalize(items: list[dict[str, Any]] | None) -> list[dict[str, str]]:
         if not content:
             continue
         if len(content) > MAX_ITEM_CHARS:
-            raise ResearchContextError(f"「{name}」超过 {MAX_ITEM_CHARS} 字符上限")
+            raise ResearchContextError(f"{name} exceeds the {MAX_ITEM_CHARS}-character limit", f"「{name}」超过 {MAX_ITEM_CHARS} 字符上限")
         total += len(content)
         if total > MAX_TOTAL_CHARS:
-            raise ResearchContextError(f"补充材料合计超过 {MAX_TOTAL_CHARS} 字符上限")
+            raise ResearchContextError(f"Supplemental materials exceed the {MAX_TOTAL_CHARS}-character total limit", f"补充材料合计超过 {MAX_TOTAL_CHARS} 字符上限")
         normalized.append({"name": name, "content": content})
     return normalized
 

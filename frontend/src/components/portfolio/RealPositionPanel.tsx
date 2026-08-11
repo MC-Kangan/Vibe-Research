@@ -98,16 +98,24 @@ export function RealPositionPanel({ preferences }: { preferences: string[] }) {
 
   const positions = data?.positions || [];
   const allocations = useMemo(() => {
-    const valued = positions.filter((item) => item.reporting_market_value != null).slice(0, 8);
+    const valued = positions.filter((item) => item.reporting_market_value != null);
     const grossExposure = valued.reduce(
       (sum, item) => sum + Math.abs(item.reporting_market_value || 0),
       0,
     );
-    return valued.map((item) => ({
-      ...item,
+    const ranked = [...valued].sort((left, right) => Math.abs(right.reporting_market_value || 0) - Math.abs(left.reporting_market_value || 0));
+    const visible = ranked.length > 8 ? ranked.slice(0, 7) : ranked;
+    const result = visible.map((item) => ({
+      key: [item.account_ref, item.symbol, item.currency, item.venue || ""].join("|"),
+      label: item.symbol,
       exposureSide: (item.reporting_market_value || 0) < 0 ? "Short" : "Long",
       weight: grossExposure ? Math.abs(item.reporting_market_value || 0) / grossExposure : null,
     }));
+    if (ranked.length > 8) {
+      const otherExposure = ranked.slice(7).reduce((sum, item) => sum + Math.abs(item.reporting_market_value || 0), 0);
+      result.push({ key: "other", label: "__OTHER__", exposureSide: "", weight: grossExposure ? otherExposure / grossExposure : null });
+    }
+    return result;
   }, [positions]);
   const instrumentByPosition = useMemo(() => new Map(instruments.map((item) => [
     [item.account_ref, item.symbol, item.currency, item.venue || ""].join("|"),
@@ -157,13 +165,13 @@ export function RealPositionPanel({ preferences }: { preferences: string[] }) {
         <h3 className="mb-2 text-sm font-semibold">{tr("Gross exposure allocation", "总敞口配置")}</h3>
         <div className="flex h-3 overflow-hidden rounded-full bg-muted/40">
           {allocations.map((item, index) => <div
-            key={`${item.account_ref}-${item.symbol}-${index}`}
-            title={`${item.exposureSide} ${item.symbol} ${percent(item.weight)}`}
+            key={item.key}
+            title={`${item.exposureSide} ${item.label === "__OTHER__" ? tr("Other", "其他") : item.label} ${percent(item.weight)}`}
             style={{ width: `${(item.weight || 0) * 100}%`, backgroundColor: ["#60a5fa", "#34d399", "#f59e0b", "#f472b6", "#a78bfa", "#fb7185"][index % 6] }}
           />)}
         </div>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {allocations.map((item, index) => <span key={`${item.account_ref}-${item.symbol}-${index}`}>{item.exposureSide} · {item.symbol} {percent(item.weight)}</span>)}
+          {allocations.map((item) => <span key={item.key}>{item.exposureSide ? `${item.exposureSide} · ` : ""}{item.label === "__OTHER__" ? tr("Other", "其他") : item.label} {percent(item.weight)}</span>)}
         </div>
       </div>}
       <div className="mt-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-border/50 text-left text-xs text-muted-foreground">{[tr("Account", "账户"), tr("Name", "名称"), tr("Quantity", "数量"), tr("Cost / source", "成本 / 来源"), tr("IBKR mark", "IBKR标记"), tr("Converted value", "折算市值"), tr("Unrealized P&L / source", "未实现盈亏 / 来源"), tr("Local currency / venue", "本币 / 交易所")].map((heading) => <th key={heading} className="whitespace-nowrap px-2 py-2 font-medium">{heading}</th>)}</tr></thead><tbody>{positions.map((item) => <tr key={`${item.account_ref}-${item.symbol}`} className="border-b border-border/30"><td className="px-2 py-2 text-xs text-muted-foreground">{item.account_label}</td><td className="px-2 py-2"><span className="font-medium">{item.name}</span><span className="ml-1.5 font-mono text-xs text-muted-foreground/60">{item.symbol}</span></td><td className="px-2 py-2 font-mono">{fmt(item.quantity)}</td><td className="px-2 py-2"><span className="font-mono">{fmt(item.average_cost)}</span><span className="ml-1.5 text-[10px] text-muted-foreground">{sourceLabel(item.cost_status, locale)}</span></td><td className="px-2 py-2 font-mono">{fmt(item.latest_price)}</td><td className="px-2 py-2 font-mono">{fmt(item.reporting_market_value ?? item.market_value)} <span className="text-[10px] text-muted-foreground">{item.reporting_currency || item.currency}</span></td><td className={`px-2 py-2 ${pnlClass(item.unrealized_pnl)}`}><span className="font-mono">{signed(item.unrealized_pnl)}</span><span className="ml-1.5 text-[10px] text-muted-foreground">{sourceLabel(item.pnl_status, locale)}</span></td><td className="px-2 py-2 text-xs text-muted-foreground">{item.currency}{item.venue ? ` · ${item.venue}` : ""}</td></tr>)}</tbody></table></div>

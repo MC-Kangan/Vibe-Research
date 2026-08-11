@@ -30,3 +30,14 @@ test("AI client sends workflow and exposes runtime capability metadata", () => {
   assert.match(panel, /Page context only/);
   assert.match(panel, /Controlled Vibe data tools/);
 });
+
+test("API credentials are blocked on insecure non-loopback origins", () => {
+  const llm = read("../src/lib/llm.ts");
+  const agents = read("../src/lib/agents.ts");
+  const settings = read("../src/pages/Settings.tsx");
+  assert.match(llm, /window\.isSecureContext/);
+  assert.match(llm, /\["localhost", "127\.0\.0\.1", "::1"\]/);
+  assert.match(llm, /API mode requires HTTPS on a LAN address/);
+  assert.match(agents, /apiCredentialsAllowedOnOrigin\(\)/);
+  assert.match(settings, /apiCredentialsAllowedOnOrigin\(\)/);
+});

@@ -1,6 +1,8 @@
 // Vibe-Research 后端 API 客户端。/api → vite 代理到本地 FastAPI（默认 8900）。
 // 后端未启动或数据源异常时抛 ApiError，页面据此优雅降级。
 
+import { getLocale, translate } from "@/lib/i18n";
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
@@ -216,7 +218,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE
   try {
     resp = await fetch(`/api${path}`, opts);
   } catch {
-    throw new ApiError("连接不到后端，请先启动 backend（uvicorn app:app --port 8900）", 0);
+    throw new ApiError(translate(getLocale(), "Cannot reach the backend. Start it with uvicorn app:app --port 8900.", "连接不到后端，请先启动 backend（uvicorn app:app --port 8900）"), 0);
   }
   let payload: any = null;
   try {
@@ -227,7 +229,7 @@ async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE
   if (!resp.ok) {
     if (resp.status === 401) {
       if (!path.startsWith("/auth/")) notifyAuthInvalidated();
-      throw new ApiError("后端需要登录或访问密钥：请先登录，或在「接入 AI」页填写 VR_API_KEY", 401);
+      throw new ApiError(translate(getLocale(), "The backend requires a login or access key. Sign in or enter VR_API_KEY in AI Setup.", "后端需要登录或访问密钥：请先登录，或在「接入 AI」页填写 VR_API_KEY"), 401);
     }
     throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);
   }
@@ -634,7 +636,7 @@ export const api = {
   runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}, assetType: "equity" | "crypto" = "equity") =>
     request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters, asset_type: assetType }),
   extractResearchContexts: (files: Array<{ name: string; content_b64: string }>) =>
-    request<ExtractedResearchContext[]>("/research-context/extract", "POST", { files }),
+    request<ExtractedResearchContext[]>("/research-context/extract", "POST", { files, locale: getLocale() }),
   uploadReport: (name: string, contentB64: string) =>
     request<MyReport>("/myreports", "POST", { name, content_b64: contentB64 }),
   deleteReport: (id: string) => request<{ ok: boolean }>(`/myreports/${id}`, "DELETE"),

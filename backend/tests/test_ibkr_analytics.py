@@ -60,6 +60,17 @@ def test_history_is_idempotent_and_exposes_analytics(monkeypatch, tmp_path: Path
     assert analytics.list_instruments("closed") == []
 
 
+def test_trade_with_invalid_timestamp_is_not_inserted(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
+    root = _current_root()
+    trade = root.find(".//Trade")
+    assert trade is not None
+    trade.attrib["tradeDate"] = "unexpected-format"
+    assert analytics._insert_current_data(root) == 0
+    with analytics._connection() as db:
+        assert db.execute("SELECT COUNT(*) FROM ibkr_trades").fetchone()[0] == 0
+
+
 def test_flow_adjusted_performance_accounts_for_deposits_and_drawdown(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("VR_IBKR_ANALYTICS_STORE", str(tmp_path / "analytics.sqlite3"))
     monkeypatch.setenv("VR_IBKR_POSITION_STORE", str(tmp_path / "positions.json"))
