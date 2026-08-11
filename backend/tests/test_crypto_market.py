@@ -118,3 +118,68 @@ def test_research_preserves_explicit_empty_asset_support(monkeypatch):
     monkeypatch.setattr(research, "configured", lambda: True)
     monkeypatch.setattr(research.requests, "get", lambda *_args, **_kwargs: Response())
     assert research.list_skills()[0]["supported_asset_types"] == []
+
+
+def test_research_exposes_new_price_series_skills_for_both_assets(monkeypatch):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return [
+                {"name": "technical-basic"},
+                {"name": "risk-analysis"},
+                {"name": "volatility-regime"},
+            ]
+
+    monkeypatch.setattr(research, "configured", lambda: True)
+    monkeypatch.setattr(research.requests, "get", lambda *_args, **_kwargs: Response())
+    skills = {item["name"]: item["supported_asset_types"] for item in research.list_skills()}
+    assert skills == {
+        "technical-basic": ["equity", "crypto"],
+        "risk-analysis": ["equity", "crypto"],
+        "volatility-regime": ["equity", "crypto"],
+    }
+
+
+def test_tradeagent_request_uses_its_strict_instrument_contract(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"results": []}
+
+    def post(*_args, **kwargs):
+        captured.update(kwargs["json"])
+        return Response()
+
+    monkeypatch.setattr(research.requests, "post", post)
+    research.run_skill(
+        skill="risk-analysis",
+        symbol="BTC-USD",
+        market="CRYPTO",
+        asset_type="crypto",
+        skill_parameters={},
+        price_series=[{
+            "instrument": {"symbol": "BTC-USD", "market": "CRYPTO"},
+            "source": "coinbase",
+            "bars": [{"observed_at": "2025-01-01T00:00:00Z", "close": 100}],
+        }],
+    )
+    assert captured["instrument"] == {"symbol": "BTC-USD", "market": "CRYPTO"}
+
+
+def test_loaded_crypto_series_uses_tradeagent_instrument_shape(monkeypatch):
+    bar = SimpleNamespace(
+        date="2025-01-01", open=99, high=101, low=98, close=100, volume=1.25,
+    )
+    monkeypatch.setattr(
+        research.market_data,
+        "get_bars",
+        lambda *_args: SimpleNamespace(bars=[bar], source="coinbase"),
+    )
+    payload = research._load_series("BTC-USD", "CRYPTO")
+    assert payload["instrument"] == {"symbol": "BTC-USD", "market": "CRYPTO"}

@@ -1,6 +1,6 @@
 <p align="center"><b>简体中文</b> | <a href="README_en.md">English</a></p>
 
-<h1 align="center">Vibe-Research · 个人 AI 投研系统（A股/美股/港股）</h1>
+<h1 align="center">Vibe-Research · 个人 AI 投研系统（股票 / 加密货币）</h1>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -21,13 +21,13 @@
   <a href="#相关生态">相关生态</a>
 </p>
 
-> **Vibe-Research: Your Personal Trading Research Agent** · A股 / 美股 / 港股 的个人投研 Agent。
+> **Vibe-Research: Your Personal Trading Research Agent** · A股 / 美股 / 欧洲股 / 港股 / 加密货币的个人投研 Agent。
 >
 > 每日复盘、资讯雷达、个股数据、自选股、板块中心、我的持仓、我的研报、研究记录。把数据和功能配齐，由**你自己的 AI** 驱动投资研究。
 
-Vibe-Research 是一个开源的「个人 AI 投研看板」，**主推 A 股、兼看美股 / 港股**（A 股常要看隔夜外围脸色，数据配上更全）。它不替你做决定——把行情、研报、估值、财务、公告、资金面、资讯都配齐，放进一个干净的看板，再留一个能接入**你自己的 AI** 的接口。方向和结论，交给你自己配置的模型 / agent。
+Vibe-Research 是一个开源、自托管的「个人 AI 投研看板」，覆盖 A 股、美股、欧洲股、港股与加密货币。它不替你做决定——把行情、研报、估值、财务、公告、资金面、资讯、真实持仓和组合分析放进一个干净的看板，再通过受控工作流接入**你自己的 AI**。方向和结论，交给你自己配置的模型 / agent。
 
-> *Vibe-Research: Your Personal Trading Research Agent. An open dashboard for China A-share (plus US / HK): it wires up all the data and plugs into **your own AI / agent** — it never recommends a stock. You bring the model, it brings the data.*
+> *Vibe-Research: Your Personal Trading Research Agent. A self-hosted dashboard for stocks and crypto with controlled access to **your own AI / agent** — it never recommends a trade. You bring the model, it brings the data.*
 
 ## 产品预览
 
@@ -64,14 +64,16 @@ Vibe-Research 是一个开源的「个人 AI 投研看板」，**主推 A 股、
 |---|---|
 | 📊&nbsp;**每&#8288;日&#8288;复&#8288;盘** | 大盘指数 · **全球市场**（隔夜美股道指 / 标普 / 纳指 + 港股恒指 / 恒生科技）· 关注股票（自选实时行情）· **短线情绪**（连板股 / 最高连板 / 连板梯队 / 封板率 / 炸板率 / 晋级率）· **全市场成交额 TOP20** · 市场情绪（大盘宽度 / 题材投机 / 涨跌停）· 板块资金趋势榜 · 资金轮动 · AI 当日复盘 |
 | 📡&nbsp;**资&#8288;讯&#8288;雷&#8288;达** | 12 赛道 108 个公开 RSS 源 · AI 一键提炼「今日要点」· A 股公告 / 公开新闻（挂钩你的关注列表）|
-| 🔍&nbsp;**个&#8288;股&#8288;数&#8288;据** | **A 股**：行情 · 估值矩阵（前向 PE / PEG）· **财报速览** · 估值历史分位 · 财务关键指标 · 研报 · 公告 · 新闻 · **资金面**（融资融券 / 股东户数 / 主力资金流 / 分红 / 大宗交易）· 龙虎榜 · 限售解禁 · 板块归属 · 热门概念 · 互动易问答。**美股 / 港股 / 韩股**（输 `AAPL` / `00700` / `005930.KS`）：行情 · 总市值 · 关键财务指标（营收 / 净利 / EPS / ROE / 毛利率 / 负债率；韩股仅行情）|
-| ⚔️&nbsp;**多&#8288;空&#8288;辩&#8288;论** | **多 agent**：后端先拉一份客观事实底稿（13 项数据），再让**多方研究员 / 空方研究员**基于同一份数据各自立论（可选交叉反驳），最后由**中立主持**归纳「双方共识 / 真正的分歧点 / 验证清单 / 数据缺口」。**刻意不产出买卖结论**。<br>⏱ 比问答重：一轮约 100 秒 / 3 次模型调用，**跑之前先看下方「一次辩论的开销」** |
+| 🔍&nbsp;**标&#8288;的&#8288;数&#8288;据** | **A 股**：行情 · 估值 · 财报 · 研报 · 公告 · 新闻 · 资金面等完整数据。**美股 / 欧洲股 / 港股 / 韩股**：交易所感知的 Yahoo/公开行情与关键财务。价格图优先展示，底部可运行 TradeAgent 的只读确定性 Skills：股票专用 `worth-buy-stocks`，以及股票 / 加密货币共用的 `markov-method`、`technical-basic`、`risk-analysis`、`volatility-regime`。Markov 提供 regime ribbon、3×3 转移矩阵、稳态分布和可调阈值；新技能覆盖技术确认、历史尾部风险与波动率状态。|
+| ⚔️&nbsp;**多&#8288;视&#8288;角&#8288;研&#8288;究** | 两种受控模式：① **多空辩论**（多方 / 空方 / 可选反驳 / 中立主持）；② **研究团队**（基本面、市场结构、事件风险三位专项研究员 + 中立负责人）。所有角色共享同一份客观底稿，刻意不产出交易指令。可同时粘贴多条笔记或上传多个 TXT / Markdown / 文字型 PDF；材料只在本次运行中使用、不会持久化。研究团队还可显式选择**单个 IBKR 开放持仓**及已保存的目标 / 风险偏好作为上下文。|
 | ⭐&nbsp;**自&#8288;选&#8288;股** | **批量粘贴一串代码即加**（逗号 / 空格 / 换行都行）· 一屏表格总览（现价 / 涨跌 / PE / PB / 换手）· **实时行情开关**（右上角，默认关；开了在交易时段每 3 秒自动刷新，非交易时段与页面切走时自动暂停）· 一键交给 AI 读。只存本地 |
 | 🧩&nbsp;**板&#8288;块&#8288;中&#8288;心** | 板块 + 产业链环节骨架 |
-| 💼&nbsp;**我&#8288;的&#8288;持&#8288;仓** | 录入即实时盈亏 · 已清仓记录（只存本地、不上传）|
+| 💼&nbsp;**我&#8288;的&#8288;持&#8288;仓** | 股票 / 加密货币 / 现金总览 · **IBKR Flex 只读同步** · 仓位分配 · 资金流调整回报与最大回撤 · P&L 日历 · 最新盈亏贡献者 · broker reconciliation · 自动交易账本 · 单仓 K 线深挖（成本线、买卖点、交易所感知代码）· Coinbase 只读余额与手工加密钱包 · 持久化投资目标 / 风险偏好。原有手工持仓和清仓记录保留在独立视图。|
 | 📄&nbsp;**我&#8288;的&#8288;研&#8288;报** | **拖拽 / 多选上传**自己的研报（PDF / Word / txt / 表格 / 图片）· 按文件名**自动分行业**归档 · 下载 / 删除。**只存本地部署目录、不上传、不进仓库** |
-| 📝&nbsp;**研&#8288;究&#8288;记&#8288;录** | 复盘 / 今日要点 / 问 AI / 辩论结果本地沉淀，随时回看 · **反思审计**：让 AI 回头审这段推理——哪些结论有数据撑着、哪些是脑补、最脆弱的一环在哪、要验证得看什么 |
-| 🔌&nbsp;**接&#8288;入&nbsp;AI** | 订阅接入（本机 CLI，免 key）· API 多模型（自动填 baseURL）· MCP（挂进 Claude Code 等 agent）|
+| 📝&nbsp;**研&#8288;究&#8288;记&#8288;录** | 复盘 / 今日要点 / 问 AI / 辩论与研究团队结果本地沉淀，随时回看 · **反思审计**：让 AI 回头审这段推理——哪些结论有数据撑着、哪些是脑补、最脆弱的一环在哪、要验证得看什么 |
+| 🔌&nbsp;**接&#8288;入&nbsp;AI** | 统一的受控 AI 层：每个入口声明工作流、启动提示词、只读工具白名单和调用预算 · 订阅接入（本机 CLI，context-only）· API 多模型（受控 function-calling）· MCP（给外部 agent）· 对话按页面 / 标的隔离并持久化。|
+
+全站为响应式布局：手机端使用可展开侧栏，桌面端可完全隐藏侧栏扩大分析画布。自托管到 NAS 时可启用单用户登录、HttpOnly 会话和登录限流。
 
 > **投研分析框架**：让 AI 分析个股时，自动按 估值 / 资金面 / 财报质量 / 行业景气 / 事件催化与风险 五维组织结论——框架只规定「怎么读数据」、不规定买卖，方向仍由你自己的 AI 决定。
 >
@@ -116,11 +118,16 @@ Vibe-Research/
 │   ├── gstock.py        美股 / 港股数据（移植自 global-stock-data）
 │   ├── newsradar.py     资讯雷达（移植自 investment-news）
 │   ├── market.py        市场情绪 + 板块资金流 + 全球指数
-│   ├── portfolio.py     持仓 + 已清仓（存本地用户目录）
+│   ├── portfolio.py     手工持仓 + 已清仓（存本地用户目录）
+│   ├── ibkr_*.py        IBKR Flex 导入、SQLite 分析账本与交易点位
+│   ├── crypto_*.py      Coinbase / 手工钱包与跨资产汇总
+│   ├── auth.py          可选单用户登录与可撤销 HttpOnly 会话
 │   ├── tools.py         统一只读 AI 工具注册表
 │   ├── ai_workflows.py  工作流提示词、工具白名单与轮次预算
 │   ├── chat.py          受控 AI 运行时（OpenAI 兼容 function-calling / CLI）
 │   ├── debate.py        多空辩论编排（事实底稿 → 多方 / 空方 / 中立主持）
+│   ├── research_team.py 研究团队编排（3 位专项研究员 → 中立负责人）
+│   ├── research_context.py  多份临时 TXT / MD / PDF 上下文提取与边界校验
 │   ├── reflection.py    反思审计（对已有分析做推理审计）
 │   └── mcp_server.py    MCP server（给 Claude Code 等 agent）
 └── frontend/          Vite + React 19 + TS + Tailwind（玻璃暖橙主题）:5899
@@ -132,7 +139,7 @@ Vibe-Research/
 
 ### 方式 A：本地一键启动（推荐开发 / 测试）
 
-前置条件：Vibe Research 和 [TradeAgent](../TradeAgent) 目录并列，且各自已经创建 `.venv` / 安装依赖。首次安装仍可按下面的命令完成：
+前置条件：Vibe Research 和 [TradeAgent](../TradeAgent) 目录并列，且各自已经创建 `.venv` / 安装依赖。TradeAgent 负责 `worth-buy-stocks`、`markov-method`、`technical-basic`、`risk-analysis` 与 `volatility-regime` 等只读确定性分析；IBKR 持仓与组合分析已经完全内置在 Vibe，**不需要 PA Master**。首次安装仍可按下面的命令完成：
 
 ```bash
 cd /Users/chenkangan/Documents/VibeResearch
@@ -152,7 +159,21 @@ cd /Users/chenkangan/Documents/VibeResearch
 bash scripts/start-local-stack.sh
 ```
 
-打开 <http://127.0.0.1:5899>。脚本在前台运行，按 `Ctrl-C` 会停止它启动的全部服务；日志会保留在脚本输出的临时目录中。
+打开 <http://127.0.0.1:5899>。脚本只启动 TradeAgent、Vibe 后端和 Vibe 前端；不会启动或调用 PA Master。脚本在前台运行，按 `Ctrl-C` 会停止它启动的全部服务；日志会保留在脚本输出的临时目录中。
+
+### TradeAgent Skills
+
+Vibe 只负责标的选择、行情归一化、AI 入口和报告展示；确定性价格序列分析由同级目录的 TradeAgent 执行。两边通过严格的 instrument contract（`symbol` + `market`）和最多 520 根日线 OHLCV 对接。股票行情沿用现有 Yahoo / A 股数据路径，加密货币日线由 Coinbase 提供，成交量保留小数。
+
+| Skill | 股票 | 加密货币 | 输入 / 输出重点 |
+|---|---:|---:|---|
+| `worth-buy-stocks` | ✓ | — | 趋势、相对强度、风险否决与参考价位 |
+| `markov-method` | ✓ | ✓ | Bull / Bear / Sideways 状态、转移矩阵与稳态分布 |
+| `technical-basic` | ✓ | ✓ | EMA、ADX/DMI、RSI、布林带、OBV 与量能确认；要求完整 OHLCV |
+| `risk-analysis` | ✓ | ✓ | 波动率、下行偏差、最大回撤、历史 VaR/CVaR 与收益分布形状 |
+| `volatility-regime` | ✓ | ✓ | 20 日实现波动率、历史百分位与扩张 / 收缩状态 |
+
+技能卡片、表格、图表坐标和 tooltip 统一显示两位小数；折叠的 Raw JSON 保留原始精度，便于审计。若数据字段或历史长度不足，界面会展示 TradeAgent 返回的 partial 状态，不会静默伪造结果。
 
 要在本地运行时使用真实持仓，可在仓库根目录创建被 Git 忽略的 `.env.local`（推荐，优先于 `.env`）：
 
@@ -167,12 +188,7 @@ export VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS='5'
 
 如果你已经有根目录 `.env`，也可以直接把这几个变量加入现有 `.env`；本地脚本在找不到 `.env.local` 时会自动读取 `.env`，Docker Compose 也使用同一个文件。
 
-然后重新启动脚本：
-
-```bash
-source .env.local
-bash scripts/start-local-stack.sh
-```
+然后重新运行 `bash scripts/start-local-stack.sh`；脚本会自动读取 `.env.local`，不存在时回退到 `.env`。
 
 当 current token/query 同时存在时，脚本会将凭据传给 Vibe 的「我的持仓」直接 IBKR 面板。history query 可选；配置后「刷新当前 + 历史」会先导入当前持仓，默认间隔 5 秒再导入历史 P&L。若 IBKR 返回正在生成（1001/1019）或 pacing（1018），Vibe 会分别使用 15 秒或 60 秒退避并只重试一次；因此正常刷新不再固定等待一分钟。
 
@@ -234,6 +250,41 @@ docker compose down
 ```
 
 不要同时运行本地脚本和 Docker Compose；两者会争用端口。Docker 不运行时，使用本地脚本完全可以工作。
+
+### 手机 / 局域网访问
+
+一键脚本默认只监听 `127.0.0.1`。要用手机测试，停止一键脚本，按下方「手动启动单个服务」启动后端，并把前端命令中的 host 改为：
+
+```bash
+cd frontend && npm run dev -- --host 0.0.0.0 --port 5899
+```
+
+在 Mac 上运行 `ipconfig getifaddr en0` 取得 Wi-Fi IP，然后在同一 Wi-Fi 的 iPhone Safari / Chrome 打开：
+
+```text
+http://<Mac 的局域网 IP>:5899
+```
+
+例如 `http://192.168.1.128:5899/portfolio`。若无法打开，检查 macOS 防火墙是否允许 Node/Vite 入站，并确认没有开启会隔离局域网设备的访客 Wi-Fi 或 VPN。局域网 HTTP 仅用于测试；跨网络 / NAS 使用应通过 HTTPS 反向代理或 Tailscale Serve，并启用下面的登录层。
+
+### NAS / 远程访问登录保护
+
+公网或跨网络部署时，在 `.env` 中启用单用户认证：
+
+```bash
+# 交互式生成 Argon2id 哈希
+docker compose run --rm backend python auth.py hash-password
+```
+
+```env
+VR_AUTH_ENABLED=true
+VR_AUTH_USERNAME=admin
+VR_AUTH_PASSWORD_HASH='$argon2id$...'
+VR_AUTH_COOKIE_SECURE=true
+VR_PUBLIC_ORIGIN=https://research.example.com
+```
+
+哈希必须用单引号包住，避免 `$` 被 Compose 插值。`VR_AUTH_COOKIE_SECURE=true` 只用于 HTTPS；纯 HTTP 局域网测试保持 `false`。不要直接暴露后端 `8900`、TradeAgent 或数据库端口。更完整的密码重置与会话说明见 [`backend/README.md`](backend/README.md)。
 
 ### IBKR Flex 配置要点
 
@@ -300,7 +351,25 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5899
 开源的多 agent 金融框架（TradingAgents、ai-hedge-fund 等）流程末端都有一个 trader /
 portfolio_manager 角色，产出「买 / 卖 / 仓位多少」。**本项目刻意不做那一层。**
 
-这里的多 agent 终点是**分歧**，不是结论：
+页面提供两个从小做起、共享安全边界的多 agent 工作流。
+
+### 研究团队
+
+```
+① 事实底稿      后端固定拉取一次客观数据
+② 三位专项角色  基本面 / 市场结构 / 事件风险分别独立检查
+③ 中立负责人    合并证据、冲突、数据缺口与下一步验证清单
+```
+
+研究团队可选一个开放的 IBKR 持仓作为上下文。发送前界面会明确预览交易所感知代码、数量、成本、标记价、未实现盈亏、NAV 占比、快照日期，以及已保存的投资目标和风险偏好；不会顺带发送其他持仓。
+
+### 多份补充材料
+
+多空辩论和研究团队都支持最多 8 项补充上下文：直接粘贴文字，或上传 UTF-8 TXT、Markdown 和可提取文字的 PDF。单文件上限 10MB、单批文件合计 25MB、单项最多 20,000 字、总计最多 50,000 字、PDF 最多 50 页。内容只在内存中提取并随本次请求发送，不写入研报库或数据目录；扫描 PDF 暂不支持 OCR。补充材料会被标记为未经验证，系统提示要求模型忽略材料中的指令并在引用时注明来源。
+
+### 多空辩论
+
+这里的辩论终点是**分歧**，不是结论：
 
 ```
 ① 事实底稿   后端按固定清单拉 13 项客观数据（不经 LLM）
@@ -353,9 +422,20 @@ portfolio_manager 角色，产出「买 / 卖 / 仓位多少」。**本项目刻
 ## 测试
 
 ```bash
+# 后端
 cd backend && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest -m "not live"   # 离线单测 + API 校验（快、稳，无需联网）
 .venv/bin/pytest -m live          # 联网核对数据源 shape（升级 / 发布前跑一遍）
+
+# 前端
+cd ../frontend
+npm test
+npm run build
+
+# 启动 / 部署配置
+cd ..
+bash -n scripts/*.sh
+docker compose config --quiet
 ```
 
 ## 合规
@@ -363,7 +443,7 @@ cd backend && .venv/bin/pip install -r requirements-dev.txt
 - 只做客观数据整理与公开榜单呈现：**不荐股、不预测涨跌、不给买卖时机、不承诺收益、不做主观评分**；中立无倾向。
 - 连板股 / 成交额榜等均为**客观公开榜单数据**（东财 / 同花顺同款），产品只如实呈现、不附带任何推荐或预测。
 - 所有分析方向由你自己配置的 AI 给出，与本产品无关。UI 无买卖按钮；估值历史分位只标位置、不划买卖线。
-- **持仓 / 关注股 / 上传的研报 / API key 只存本地，不上传、不进仓库。**
+- **持仓 / 关注股 / 上传的研报 / API key 只存本地，不进仓库。** 只有当你主动调用 AI 时，对应页面上下文才会发送给你配置的模型端点；研究团队的补充材料不会在 Vibe 中持久化。
 - 持仓与上传的研报默认存在**用户目录 `~/.vibe-research/`**（可用环境变量 `VR_DATA_DIR` 换根目录、`VR_REPORTS_DIR` 单独指定研报目录）——在项目文件夹之外，**重新下载 / 覆盖更新项目文件夹不会丢数据**；旧版本存在 `backend/.cache/` 的数据，新版首次启动自动迁移（复制，原文件保留）。
 
 ## 相关生态

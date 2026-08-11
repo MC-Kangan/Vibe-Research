@@ -14,10 +14,19 @@ import market_data
 import tools as data_tools
 from market_data.yahoo import YahooProvider
 
-ALLOWED_SKILLS = {"worth-buy-stocks", "markov-method"}
+ALLOWED_SKILLS = {
+    "worth-buy-stocks",
+    "markov-method",
+    "technical-basic",
+    "risk-analysis",
+    "volatility-regime",
+}
 DEFAULT_SKILL_ASSET_TYPES = {
     "worth-buy-stocks": ("equity",),
     "markov-method": ("equity", "crypto"),
+    "technical-basic": ("equity", "crypto"),
+    "risk-analysis": ("equity", "crypto"),
+    "volatility-regime": ("equity", "crypto"),
 }
 _A_SHARE_BENCHMARKS = {"CSI300": ("000300", "SSE"), "CSI500": ("000905", "SSE")}
 _EU_INDEXES = {"SXXP": ("^STOXX", "INDEX"), "SX5E": ("^STOXX50E", "INDEX")}
@@ -109,7 +118,7 @@ def run_skill(
     if skill not in ALLOWED_SKILLS:
         raise ResearchClientError("Selected skill is not enabled")
     request = {
-        "instrument": {"symbol": symbol, "market": market, "asset_type": asset_type},
+        "instrument": {"symbol": symbol, "market": market},
         "analysts": [skill],
         "skill_parameters": skill_parameters,
         "price_series": price_series,
@@ -238,7 +247,7 @@ def _load_series(symbol: str, market: str) -> dict[str, Any]:
         })
     if not bars:
         raise ResearchClientError("No usable daily bars returned")
-    return {"instrument": {"symbol": symbol, "market": market, "asset_type": "crypto" if market == "CRYPTO" else "equity"}, "source": source, "bars": bars[-520:]}
+    return {"instrument": {"symbol": symbol, "market": market}, "source": source, "bars": bars[-520:]}
 
 
 def _a_share_history(symbol: str, market: str) -> tuple[list[dict[str, Any]], str]:

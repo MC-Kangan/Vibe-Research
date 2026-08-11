@@ -1,6 +1,6 @@
 <p align="center"><a href="README.md">简体中文</a> | <b>English</b></p>
 
-<h1 align="center">Vibe-Research · Your Personal AI Research Dashboard (A-share / US / HK)</h1>
+<h1 align="center">Vibe-Research · Your Personal AI Research Dashboard (Stocks / Crypto)</h1>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -21,9 +21,9 @@
 
 > **Vibe-Research: Your Personal Trading Research Agent.**
 >
-> An open dashboard for China A-share (plus US / HK): it wires up all the data and plugs into **your own AI / agent** — it never recommends a stock. You bring the model, it brings the data.
+> A self-hosted dashboard for A-share, US, European and Hong Kong stocks plus crypto. It plugs into **your own AI / agent** without recommending a trade.
 
-Vibe-Research is an open-source research dashboard built primarily for **China A-share**, with US and HK markets included (A-share traders usually check overnight Wall Street and Hong Kong first, so the data is wired up too).
+Vibe-Research is an open-source, self-hosted research dashboard covering A-share, US, European and Hong Kong stocks plus crypto.
 
 It does not make decisions for you. It pulls together quotes, analyst reports, valuation, financials, filings, fund flows and news into one clean dashboard, then leaves an interface where **you plug in your own AI**. The direction and the conclusions come from the model or agent *you* configure.
 
@@ -60,14 +60,16 @@ It does not make decisions for you. It pulls together quotes, analyst reports, v
 |---|---|
 | 📊&nbsp;**Daily&nbsp;Review** | Index quotes · **Global markets** (Dow / S&P / Nasdaq overnight + Hang Seng / HS Tech) · Watchlist quotes · **Short-term sentiment** (consecutive limit-up ladder, seal rate, break rate, promotion rate) · **Market-wide turnover top 20** · Market breadth · Sector fund-flow trends · Sector rotation · One-click AI review |
 | 📡&nbsp;**News&nbsp;Radar** | 108 public RSS feeds across 12 tracks · AI-distilled "today's takeaways" · A-share filings and public news linked to your watchlist |
-| 🔍&nbsp;**Stock&nbsp;Data** | **A-share**: quotes · valuation matrix (forward PE / PEG) · **earnings snapshot** · valuation percentile vs. own 5-year history · key financials · analyst reports · filings · news · **fund flows** (margin trading, shareholder count, main-force flow, dividends, block trades) · top-list (Dragon-Tiger) · lockup expiry · sector membership · trending concepts · investor Q&A.<br>**US / HK / KR** (enter `AAPL` / `00700` / `005930.KS`): quotes · market cap · key financials (KR is quotes only) |
-| ⚔️&nbsp;**Bull&nbsp;vs&nbsp;Bear** | **Multi-agent**: the backend first pulls a 13-item factual dossier, then a **bull researcher** and a **bear researcher** argue from that same data (optional rebuttal round), and a **neutral moderator** summarizes "what both sides agree on / where they actually disagree / what to verify / what data is missing". **Deliberately produces no buy or sell conclusion.**<br>⏱ Heavier than a chat: ~100s and 3 model calls per round — see [cost](#-what-one-debate-costs-read-before-you-run-it) first |
+| 🔍&nbsp;**Instrument&nbsp;Data** | Full A-share data plus exchange-aware public/Yahoo market data for US, European, HK and KR securities. Charts come first; TradeAgent supplies deterministic read-only Skills: equity-only `worth-buy-stocks`, plus cross-asset `markov-method`, `technical-basic`, `risk-analysis`, and `volatility-regime`. Markov includes a live regime ribbon, 3×3 transition matrix, stationary distribution and adjustable thresholds; the new skills cover technical confirmation, historical tail risk and volatility state. |
+| ⚔️&nbsp;**Multi-perspective&nbsp;Research** | Two controlled modes: **bull-vs-bear debate** and a **research team** with fundamentals, market-structure and event-risk specialists followed by a neutral lead. Every role shares one factual dossier and deliberately avoids trade instructions. Add multiple pasted notes or TXT / Markdown / text PDF files for one run. The team may explicitly include one open IBKR position and the saved investment goals/risk preferences. |
 | ⭐&nbsp;**Watchlist** | **Paste a whole batch of tickers at once** (commas, spaces or newlines) · one-screen table (price, change, PE, PB, turnover) · **live quotes toggle** (top right, off by default; refreshes every 3s during trading hours, auto-pauses outside them and when the tab is hidden) · hand the whole list to your AI. Stored locally |
 | 🧩&nbsp;**Sectors** | Sector and value-chain skeletons |
-| 💼&nbsp;**Portfolio** | Enter cost and size, see live P&L · closed-position log (local only, never uploaded) |
+| 💼&nbsp;**Portfolio** | Stock / crypto / cash overview · read-only IBKR Flex sync · allocation · flow-adjusted performance and drawdown · P&L calendar · latest contributors · broker reconciliation · automatic trade ledger · per-position candles with cost and execution markers · read-only Coinbase balances and manual crypto wallets · persistent goals and risk preferences. Manual stock records remain in a separate view. |
 | 📄&nbsp;**My Reports** | Drag-and-drop your own research PDFs / Word / spreadsheets · auto-filed by industry from the filename · download or delete. **Stored in your local deploy directory only** |
-| 📝&nbsp;**Research Notes** | Save AI reviews, takeaways, Q&A and debates locally · **reflection audit**: have the AI audit its own reasoning — which claims are backed by data, which are speculation, where the weakest link is, and what to check next |
-| 🔌&nbsp;**Bring Your AI** | Subscription mode (local CLI, no API key) · API mode (any OpenAI-compatible endpoint) · MCP (mount into Claude Code and other agents) |
+| 📝&nbsp;**Research Notes** | Save AI reviews, takeaways, Q&A, debates and research-team output locally · **reflection audit**: have the AI audit its own reasoning — which claims are backed by data, which are speculation, where the weakest link is, and what to check next |
+| 🔌&nbsp;**Bring Your AI** | One controlled AI layer: each entry point declares a workflow prompt, read-only tool allowlist and call budget · subscription CLI (context-only) · API models (controlled function calling) · MCP for external agents · conversations persisted and scoped by page/instrument. |
+
+The whole UI is responsive: phones use an expandable side drawer, while desktop users can fully hide the sidebar. NAS deployments can enable single-user login, revocable HttpOnly sessions and login throttling.
 
 > **Built-in analysis framework**: when your AI analyzes a stock it organizes findings across five dimensions — valuation, fund flows, earnings quality, industry cycle, catalysts and risks. The framework only prescribes *how to read the data*, never what to buy. The direction still comes from your own model.
 >
@@ -101,7 +103,7 @@ Three public data toolkits are **vendored directly into this repo** — `git clo
 
 ## Architecture
 
-One data layer, three AI outlets:
+One data layer, controlled workflows and two model runtimes:
 
 ```
 Vibe-Research/
@@ -112,10 +114,16 @@ Vibe-Research/
 │   ├── gstock.py        US / HK data
 │   ├── newsradar.py     News radar
 │   ├── market.py        Market breadth + sector fund flows + global indices
-│   ├── portfolio.py     Portfolio (stored in your local user directory)
-│   ├── tools.py         AI tool layer (23 data tools, shared by chat / MCP / debate)
-│   ├── chat.py          In-app AI (OpenAI-compatible function calling)
+│   ├── portfolio.py     Manual portfolio (stored in your local user directory)
+│   ├── ibkr_*.py        IBKR Flex import, SQLite analytics ledger and executions
+│   ├── crypto_*.py      Coinbase/manual wallets and cross-asset aggregation
+│   ├── auth.py          Optional single-user login and revocable HttpOnly sessions
+│   ├── tools.py         Shared read-only AI tool registry
+│   ├── ai_workflows.py  Workflow prompts, tool allowlists and call budgets
+│   ├── chat.py          Controlled API function calling / local CLI runtime
 │   ├── debate.py        Bull-vs-bear orchestration (dossier → bull / bear / moderator)
+│   ├── research_team.py Specialist team orchestration (3 specialists → neutral lead)
+│   ├── research_context.py  Bounded transient TXT / MD / PDF context extraction
 │   ├── reflection.py    Reflection audit (audits reasoning in existing analysis)
 │   └── mcp_server.py    MCP server (for Claude Code and other agents)
 └── frontend/          Vite + React 19 + TS + Tailwind :5899
@@ -128,16 +136,44 @@ Vibe-Research/
 ### Option A: local all-in-one launcher
 
 With `TradeAgent` and `VibeResearch` checked out as sibling directories and
-their virtual environments installed:
+their virtual environments installed. TradeAgent supplies the read-only
+`worth-buy-stocks`, `markov-method`, `technical-basic`, `risk-analysis`, and
+`volatility-regime` Skills. IBKR holdings and analytics run directly inside
+Vibe; **PA Master is not required**.
 
 ```bash
 cd /Users/chenkangan/Documents/VibeResearch
 bash scripts/start-local-stack.sh
 ```
 
-Open <http://127.0.0.1:5899>. Press `Ctrl-C` in the launcher terminal to stop
-all services. To use real read-only positions locally, create the Git-ignored
-`.env.local` file (preferred; the launcher also falls back to the root `.env`):
+Open <http://127.0.0.1:5899>. The launcher starts only TradeAgent, the Vibe
+backend and the Vibe frontend; it does not start or call PA Master. Press
+`Ctrl-C` in the launcher terminal to stop all services.
+
+### TradeAgent Skills
+
+Vibe owns instrument selection, normalized market-data loading, AI entry points,
+and report presentation. Deterministic price-series analytics run in the sibling
+TradeAgent service. The repositories share a strict instrument contract
+(`symbol` + `market`) and up to 520 daily OHLCV bars. Equity series keep the
+existing Yahoo/A-share paths; crypto daily bars come from Coinbase and retain
+fractional volume.
+
+| Skill | Equities | Crypto | Primary inputs and outputs |
+|---|---:|---:|---|
+| `worth-buy-stocks` | Yes | — | Trend, relative strength, risk vetoes, and reference levels |
+| `markov-method` | Yes | Yes | Bull/Bear/Sideways state, transition matrix, and stationary distribution |
+| `technical-basic` | Yes | Yes | EMA, ADX/DMI, RSI, Bollinger Bands, OBV, and volume confirmation; complete OHLCV required |
+| `risk-analysis` | Yes | Yes | Volatility, downside deviation, drawdown, historical VaR/CVaR, and return shape |
+| `volatility-regime` | Yes | Yes | 20-day realized volatility, historical percentile, and expansion/contraction state |
+
+Skill cards, tables, chart axes, and tooltips display two decimal places. The
+collapsible Raw JSON keeps original precision for auditing. Missing fields or
+insufficient history remain explicit TradeAgent partial results; Vibe does not
+fabricate substitutes.
+
+To use real read-only positions locally, create the Git-ignored `.env.local`
+file (preferred; the launcher also falls back to the root `.env`):
 
 ```bash
 export VR_IBKR_FLEX_TOKEN='your_flex_token'
@@ -201,6 +237,50 @@ COMPOSE_PROFILES=research docker compose up -d --build
 The same `VR_TRADE_RESEARCH_API_TOKEN` is passed to both services. Do not run
 the local launcher and Compose simultaneously.
 
+### Phone / LAN access
+
+The all-in-one launcher binds to `127.0.0.1` by default. For phone testing,
+stop it, start the backend using the manual mode below, and expose only the
+development frontend to the LAN:
+
+```bash
+cd frontend && npm run dev -- --host 0.0.0.0 --port 5899
+```
+
+On macOS, run `ipconfig getifaddr en0` to find the Wi-Fi address, then open
+this from an iPhone on the same Wi-Fi:
+
+```text
+http://<Mac LAN IP>:5899
+```
+
+For example, `http://192.168.1.128:5899/portfolio`. If it cannot connect, allow
+Node/Vite through the macOS firewall and make sure guest-Wi-Fi isolation or a
+VPN is not separating the devices. LAN HTTP is for testing only. For a NAS or
+cross-network deployment, use HTTPS through a reverse proxy or Tailscale Serve
+and enable login protection.
+
+### NAS / remote login protection
+
+Generate an Argon2id password hash and enable the browser login in `.env`:
+
+```bash
+docker compose run --rm backend python auth.py hash-password
+```
+
+```env
+VR_AUTH_ENABLED=true
+VR_AUTH_USERNAME=admin
+VR_AUTH_PASSWORD_HASH='$argon2id$...'
+VR_AUTH_COOKIE_SECURE=true
+VR_PUBLIC_ORIGIN=https://research.example.com
+```
+
+Keep the hash in single quotes so Compose does not interpolate `$` characters.
+Use `VR_AUTH_COOKIE_SECURE=true` only behind HTTPS; leave it `false` for plain
+LAN HTTP tests. Never expose port 8900, TradeAgent or the database directly.
+See [`backend/README.md`](backend/README.md) for password reset and session details.
+
 ### Manual two-process mode
 
 For a minimal setup, source `.env.local` (if used) in two terminals:
@@ -215,7 +295,7 @@ cd frontend && npm install && npm run dev -- --host 127.0.0.1 --port 5899
 
 ## Bring Your Own AI
 
-Configure once on the "Bring your AI" page and every AI feature across the dashboard uses your model. **All analysis comes from your model — this project does not tune or bias it.** Three options:
+Configure once on the "Bring your AI" page and every AI feature across the dashboard uses your model. **All analysis comes from your model — this project does not tune or bias it.** Each entry point selects an explicit workflow that controls its startup prompt, read-only tool allowlist and maximum tool rounds. Three options:
 
 ### 1. Subscription mode (uses a CLI you're already logged into — no API key)
 
@@ -227,7 +307,9 @@ Uses your existing subscription instead of paying per API call. Supported: **Cla
 
 ### 2. API mode (bring your own key)
 
-Pick a model and the base URL is filled in for you — just paste the key. Built-in presets for **DeepSeek / Doubao / MiniMax / OpenAI / OpenRouter / Groq / Together / MiMo / any OpenAI-compatible endpoint**. This mode supports function calling, so the AI fetches quotes, valuation, reports and news on its own. Your key stays in your browser's local storage and is sent only to your own backend.
+Pick a model and the base URL is filled in for you — just paste the key. Built-in presets for **DeepSeek / Doubao / MiniMax / OpenAI / OpenRouter / Groq / Together / MiMo / any OpenAI-compatible endpoint**. This mode supports function calling, but only through the selected workflow's Vibe tool allowlist. Your key stays in your browser's local storage and is sent only to your own backend.
+
+There is currently no general web-search or private-knowledge-base tool. Future Web Search or Obsidian integrations should be added as separate read-only tools and enabled only for workflows that need them.
 
 ### 3. MCP (for Claude Code and other agents)
 
@@ -237,7 +319,34 @@ Mount the backend as an MCP server so your agent can call Vibe-Research's data t
 
 Open-source multi-agent finance frameworks (TradingAgents, ai-hedge-fund and friends) end their pipeline with a trader or portfolio_manager role that outputs "buy / sell / how much". **This project deliberately omits that layer.**
 
-Here the endpoint of the multi-agent flow is **disagreement**, not a verdict:
+The page provides two deliberately small multi-agent workflows with the same safety boundary.
+
+### Research team
+
+```
+1. Factual dossier    backend fetches objective data once
+2. Three specialists fundamentals / market structure / event risk
+3. Neutral lead       evidence, conflicts, missing data and verification checklist
+```
+
+The team can include one explicitly selected open IBKR position. Before a run,
+the UI previews the exchange-aware symbol, quantity, cost, mark, unrealized P&L,
+NAV weight, snapshot date, and the saved investment goals/risk preferences.
+Other positions are not included implicitly.
+
+### Multiple supplemental contexts
+
+Both modes accept up to eight pasted notes or UTF-8 TXT, Markdown and
+text-extractable PDF files. Limits are 10MB per file, 25MB per upload batch,
+20,000 characters per item, 50,000 characters total, and 50 pages per PDF.
+Files are extracted in memory for the current run and are not written to the
+report library or data directory; scanned PDFs do not currently use OCR.
+Supplemental material is marked unverified, document instructions are treated
+as untrusted, and the model is told to cite the material by name.
+
+### Bull-vs-bear debate
+
+Here the endpoint is **disagreement**, not a verdict:
 
 ```
 ① Factual dossier   backend pulls 13 objective datasets (no LLM involved)
@@ -285,9 +394,20 @@ Much cheaper — **a single model call** over the text you selected.
 ## Tests
 
 ```bash
+# Backend
 cd backend && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest -m "not live"   # offline unit + API tests (fast, no network)
 .venv/bin/pytest -m live         # verifies live data source shapes (run before releases)
+
+# Frontend
+cd ../frontend
+npm test
+npm run build
+
+# Startup and deployment configuration
+cd ..
+bash -n scripts/*.sh
+docker compose config --quiet
 ```
 
 ## Compliance
@@ -295,7 +415,7 @@ cd backend && .venv/bin/pip install -r requirements-dev.txt
 - Objective data aggregation and public-ranking display only: **no stock recommendations, no price predictions, no trade timing, no return promises, no subjective scoring.** Neutral by design.
 - Limit-up lists and turnover rankings are **objective public data** (the same numbers Eastmoney and Tonghuashun publish); the product displays them as-is with nothing attached.
 - All analytical direction comes from the AI *you* configure, not from this project. There are no buy/sell buttons in the UI, and valuation percentiles mark position only — no lines suggesting when to act.
-- **Your portfolio, watchlist, uploaded reports and API keys stay on your machine.** Nothing is uploaded; nothing enters the repo.
+- **Your portfolio, watchlist, uploaded reports and API keys stay on your machine and out of the repository.** When you explicitly run an AI workflow, only that workflow's visible context is sent to the model endpoint you configured. Research-team supplemental files are not persisted by Vibe.
 - Portfolio and uploaded reports default to `~/.vibe-research/` (override with `VR_DATA_DIR` / `VR_REPORTS_DIR`) — outside the project folder, so re-downloading or overwriting the project never loses your data.
 
 ## Related Projects
