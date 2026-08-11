@@ -39,6 +39,7 @@ import position_service
 import reflection as reflect_layer
 import research as research_layer
 import research_context
+import research_skill_preferences
 import research_team
 
 app = FastAPI(title="Vibe-Research API", version="0.3.0")
@@ -282,6 +283,24 @@ class ResearchContextIn(BaseModel):
     content: str = Field(max_length=research_context.MAX_ITEM_CHARS)
 
 
+class ResearchSkillDefaultsIn(BaseModel):
+    asset_type: Literal["equity", "crypto"]
+    skills: list[Literal["worth-buy-stocks", "markov-method", "technical-basic", "risk-analysis", "volatility-regime"]] = Field(default_factory=list, max_length=5)
+
+
+@app.get("/api/research/skill-defaults")
+def research_skill_defaults_get():
+    return {"data": research_skill_preferences.get()}
+
+
+@app.put("/api/research/skill-defaults")
+def research_skill_defaults_put(request: ResearchSkillDefaultsIn):
+    try:
+        return {"data": research_skill_preferences.save(request.asset_type, request.skills)}
+    except research_skill_preferences.ResearchSkillPreferenceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class DebateReq(BaseModel):
     code: str
     rounds: int = 1
@@ -289,6 +308,8 @@ class DebateReq(BaseModel):
     llm: LLMConfig
     locale: Literal["en", "zh-CN"] = "en"
     additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
+    research_skills: list[Literal["worth-buy-stocks", "markov-method", "technical-basic", "risk-analysis", "volatility-regime"]] = Field(default_factory=list, max_length=5)
+    research_skill_parameters: dict[str, dict] = Field(default_factory=dict)
 
 
 @app.post("/api/debate")
@@ -309,7 +330,10 @@ def debate(req: DebateReq):
         contexts = research_context.normalize([item.model_dump() for item in req.additional_contexts])
     except research_context.ResearchContextError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return _ndjson(lambda: debate_layer.run_debate_stream(cfg, code, rounds, req.asset_type, contexts))
+    return _ndjson(lambda: debate_layer.run_debate_stream(
+        cfg, code, rounds, req.asset_type, contexts,
+        list(dict.fromkeys(req.research_skills)), req.research_skill_parameters,
+    ))
 
 
 class ResearchFileIn(BaseModel):
@@ -337,6 +361,9 @@ class ResearchTeamReq(BaseModel):
     locale: Literal["en", "zh-CN"] = "en"
     additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
     position_instrument_key: str | None = Field(default=None, max_length=64)
+    include_position_preferences: bool = False
+    research_skills: list[Literal["worth-buy-stocks", "markov-method", "technical-basic", "risk-analysis", "volatility-regime"]] = Field(default_factory=list, max_length=5)
+    research_skill_parameters: dict[str, dict] = Field(default_factory=dict)
 
 
 @app.post("/api/research-team")
@@ -346,7 +373,10 @@ def research_team_run(request: ResearchTeamReq):
     code = request.code
     if request.position_instrument_key:
         try:
-            provider_symbol, position_text, position_context = research_team.resolve_position(request.position_instrument_key)
+            provider_symbol, position_text, position_context = research_team.resolve_position(
+                request.position_instrument_key,
+                request.include_position_preferences,
+            )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if code.strip().upper() != provider_symbol:
@@ -361,7 +391,10 @@ def research_team_run(request: ResearchTeamReq):
     except research_context.ResearchContextError as exc:
         raise HTTPException(400, str(exc)) from exc
     cfg = _check_llm(request.llm, request.locale)
-    response = _ndjson(lambda: research_team.run_stream(cfg, code, request.asset_type, contexts, position_text))
+    response = _ndjson(lambda: research_team.run_stream(
+        cfg, code, request.asset_type, contexts, position_text,
+        list(dict.fromkeys(request.research_skills)), request.research_skill_parameters,
+    ))
     if position_context:
         response.headers["X-Vibe-Position-Context"] = "selected-only"
     return response

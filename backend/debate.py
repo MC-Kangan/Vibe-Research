@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import chat
 import cli_runtime
 import market_data
+import research as research_layer
 import tools
 import research_context
 
@@ -95,6 +96,7 @@ def _known_market_gaps(symbol: str, asset_type: str = "equity") -> list[str]:
     return common
 
 _SECTION_CAP = 1800  # 单个小节注入上限，防止某项数据把整份底稿撑爆
+_SKILL_SECTION_CAP = 7000  # 技能已在 research.py 压缩；保留因子、基准与确认项
 _PARALLEL_WORKERS = 4
 
 # 判空时要跳过的「元信息」字段：它们描述数据本身，不构成观测值。
@@ -149,6 +151,8 @@ def _compact_market_bars(value):
     highs = [row["high"] for row in bars if numeric(row.get("high"))]
     lows = [row["low"] for row in bars if numeric(row.get("low"))]
     volumes = [row["volume"] for row in bars if numeric(row.get("volume"))]
+    high_row = max((row for row in bars if numeric(row.get("high"))), key=lambda row: row["high"], default=None)
+    low_row = min((row for row in bars if numeric(row.get("low"))), key=lambda row: row["low"], default=None)
     period_change_pct = None
     if len(closes) >= 2 and closes[0] != 0:
         period_change_pct = round((closes[-1] - closes[0]) / closes[0] * 100, 4)
@@ -162,7 +166,10 @@ def _compact_market_bars(value):
             "period_start": bars[0].get("date"), "period_end": bars[-1].get("date"),
             "start_close": closes[0] if closes else None, "end_close": closes[-1] if closes else None,
             "period_change_pct": period_change_pct,
-            "period_high": max(highs) if highs else None, "period_low": min(lows) if lows else None,
+            "period_high": max(highs) if highs else None,
+            "period_high_date": high_row.get("date") if high_row else None,
+            "period_low": min(lows) if lows else None,
+            "period_low_date": low_row.get("date") if low_row else None,
             "average_volume": round(sum(volumes) / len(volumes)) if volumes else None,
         },
         "recent_bars": recent,
@@ -250,13 +257,62 @@ def build_dossier(code: str, asset_type: str = "equity") -> dict:
         return stop.value
 
 
+def append_research_skills(
+    dossier: dict,
+    skills: list[str] | None,
+    asset_type: str = "equity",
+    parameters: dict[str, dict] | None = None,
+    cfg: dict | None = None,
+):
+    """Add selected deterministic skill reports to the one shared dossier."""
+    selected = list(dict.fromkeys(skills or []))
+    if not selected:
+        return dossier
+    yield {
+        "type": "status",
+        "message": chat.localized_text(
+            cfg or {},
+            "Running selected deterministic TradeAgent skills once for the shared dossier…",
+            "正在为共享底稿运行所选的确定性 TradeAgent 技能（每项仅一次）…",
+        ),
+    }
+    try:
+        payload = research_layer.run_skills_shared(
+            symbol=dossier["code"],
+            skills=selected,
+            parameters=parameters,
+            asset_type=asset_type,
+        )
+    except Exception as exc:  # noqa: BLE001 — base dossier remains useful when TradeAgent is unavailable
+        dossier["missing"].extend(f"Deterministic skill · {skill}" for skill in selected)
+        yield {"type": "status", "message": chat.localized_text(
+            cfg or {},
+            f"Selected TradeAgent skills were unavailable: {exc}",
+            f"所选 TradeAgent 技能不可用：{exc}",
+        )}
+        return dossier
+
+    total = len(selected)
+    for index, result in enumerate(payload.get("results", []), start=1):
+        skill = str(result.get("skill") or "unknown")
+        title = f"Deterministic skill · {skill}"
+        ok = result.get("status") == "complete" and isinstance(result.get("report"), dict)
+        if ok:
+            dossier["sections"].append({"title": title, "tool": "run_research_skill", "data": result["report"]})
+        else:
+            dossier["missing"].append(title)
+        yield {"type": "dossier_progress", "title": title, "ok": ok, "loaded": index, "total": total}
+    return dossier
+
+
 def dossier_text(dossier: dict) -> str:
     """把底稿渲染成给模型看的纯文本。"""
     parts = [f"Objective evidence dossier · {dossier['code']}", "All content below is objective API data and contains no opinion:", ""]
     for s in dossier["sections"]:
         data = s["data"]
         # 「无记录」这类说明是给模型读的自然语言，别再套一层 JSON 引号
-        body = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)[:_SECTION_CAP]
+        cap = _SKILL_SECTION_CAP if s.get("tool") == "run_research_skill" else _SECTION_CAP
+        body = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)[:cap]
         parts.append(f"## {s['title']} (source tool: {s['tool']})\n{body}\n")
     if dossier["missing"]:
         parts.append(f"## Data gaps\nThe following data was unavailable and must not be inferred: {(', '.join(dossier['missing']))}")
@@ -355,6 +411,8 @@ def run_debate_stream(
     rounds: int = 1,
     asset_type: str = "equity",
     contexts: list[dict[str, str]] | None = None,
+    research_skills: list[str] | None = None,
+    research_skill_parameters: dict[str, dict] | None = None,
 ):
     """跑一场辩论，yield NDJSON 事件。
 
@@ -366,6 +424,7 @@ def run_debate_stream(
 
     yield {"type": "status", "message": chat.localized_text(cfg, "Retrieving the objective evidence dossier…", "正在拉取客观事实底稿…")}
     dossier = yield from collect_dossier(code, asset_type)
+    dossier = yield from append_research_skills(dossier, research_skills, asset_type, research_skill_parameters, cfg)
     # 只有「无记录」说明、没有一条真实数据时同样算取数失败——
     # 让多空基于一份全是「未取到」的底稿互相质疑毫无意义。
     if not any(not isinstance(s["data"], str) for s in dossier["sections"]):

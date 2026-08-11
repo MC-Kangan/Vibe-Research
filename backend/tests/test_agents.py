@@ -14,6 +14,7 @@ import ai_workflows
 import chat
 import debate
 import reflection
+import research
 import tools
 
 client = TestClient(app_module.app)
@@ -45,6 +46,8 @@ def test_workflow_tool_scopes_are_valid_and_distinct():
     assert set(ai_workflows.WORKFLOWS["portfolio"].tool_names) < set(tools.TOOL_NAMES)
     assert "query_us_filings" in ai_workflows.WORKFLOWS["stock"].tool_names
     assert "query_fund_flow" not in ai_workflows.WORKFLOWS["portfolio"].tool_names
+    assert "run_research_skill" in ai_workflows.WORKFLOWS["stock"].tool_names
+    assert "run_research_skill" in ai_workflows.WORKFLOWS["portfolio"].tool_names
 
 
 def test_cli_workflow_metadata_is_context_only():
@@ -89,12 +92,90 @@ def test_exec_tool_wraps_handler_exception(monkeypatch):
     assert "error" in out and "query_quote" in out["error"]
 
 
+def test_research_skill_vibe_method_uses_controlled_bridge(monkeypatch):
+    captured = {}
+
+    def fake(**kwargs):
+        captured.update(kwargs)
+        return {"symbol": "SMH.L", "results": [{"skill": "technical-basic", "status": "complete"}]}
+
+    monkeypatch.setattr(research, "run_skill_for_ai", fake)
+    result = tools.exec_tool("run_research_skill", {
+        "symbol": "SMH.L", "skill": "technical-basic", "asset_type": "equity",
+    })
+    assert captured == {"symbol": "SMH.L", "skill": "technical-basic", "asset_type": "equity", "parameters": None}
+    assert result["results"][0]["status"] == "complete"
+
+
 # ---- 辩论编排 ----
 
 def test_stage_plan():
     assert debate._stage_plan(1) == ["bull", "bear", "referee"]
     assert debate._stage_plan(2) == ["bull", "bear", "bull_rebut", "bear_rebut", "referee"]
     assert all(s in debate._ROLE_PROMPTS for s in debate._stage_plan(2))
+
+
+def test_selected_research_skills_are_computed_once_into_shared_dossier(monkeypatch):
+    calls = []
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return {
+            "symbol": "AAPL", "market": "US", "asset_type": "equity",
+            "results": [
+                {"skill": skill, "status": "complete", "report": {"metric": skill}}
+                for skill in kwargs["skills"]
+            ],
+        }
+
+    monkeypatch.setattr(debate.research_layer, "run_skills_shared", fake_run)
+    dossier = {"code": "AAPL", "sections": [], "missing": []}
+    generator = debate.append_research_skills(
+        dossier, ["technical-basic", "risk-analysis", "technical-basic"], "equity",
+    )
+    events = []
+    try:
+        while True:
+            events.append(next(generator))
+    except StopIteration as stop:
+        result = stop.value
+
+    assert len(calls) == 1
+    assert calls[0]["skills"] == ["technical-basic", "risk-analysis"]
+    assert [section["tool"] for section in result["sections"]] == ["run_research_skill", "run_research_skill"]
+    assert sum(event["type"] == "dossier_progress" for event in events) == 2
+
+
+def test_skill_dossier_keeps_factors_benchmarks_and_confirmations_before_chart_data():
+    report = {
+        "instrument": {"symbol": "MRVL", "market": "US"},
+        "generated_at": "2026-08-11T12:00:00Z",
+        "results": [{
+            "analyst": "worth-buy-stocks", "status": "complete", "signal": "neutral",
+            "summary": "screen complete",
+            "observations": [
+                {"metric": "worth_buy_relative_strength", "value": 72.5, "source": "computed", "observed_at": "2026-08-11", "provenance": {"algorithm": "relative_strength", "window": "vs_spy", "series_ref": "large-chart-only-value"}},
+            ],
+            "presentation": {
+                "template": "worth-buy-stocks-v1",
+                "benchmarks": [{"label": "SPY", "available": True}, {"label": "QQQ", "available": True}],
+                "score_components": [{"key": "relative_strength", "score": 72.5, "weight": 0.35}],
+                "confirmation_checks": [{"key": "volume_confirmation", "status": "pass", "value": 1.2}],
+                "price_bars": [{"observed_at": f"2026-07-{index:02d}", "close": index} for index in range(1, 31)],
+            },
+        }],
+    }
+    compact = research.compact_report_for_ai(report)
+    text = debate.dossier_text({
+        "code": "MRVL", "missing": [],
+        "sections": [{"title": "Deterministic skill · worth-buy-stocks", "tool": "run_research_skill", "data": compact}],
+    })
+
+    assert "worth_buy_relative_strength" in text
+    assert "vs_spy" in text and "large-chart-only-value" not in text
+    assert '"label": "SPY"' in text and '"label": "QQQ"' in text
+    assert "confirmation_checks" in text and "score_components" in text
+    assert "price_bars" not in text and '"price_bar_count": 30' in text
 
 
 def test_bull_speaks_first_without_context():
@@ -224,6 +305,8 @@ def test_market_bar_dossier_keeps_recent_history_and_full_period_summary():
     assert compact["summary"]["period_start"] == "2026-01-01"
     assert compact["summary"]["period_end"] == "2026-01-30"
     assert compact["summary"]["period_change_pct"] == 29.0
+    assert compact["summary"]["period_high_date"] == "2026-01-30"
+    assert compact["summary"]["period_low_date"] == "2026-01-01"
     assert compact["recent_bars"][0]["date"] == "2026-01-16"
     assert compact["recent_bars"][-1]["date"] == "2026-01-30"
 

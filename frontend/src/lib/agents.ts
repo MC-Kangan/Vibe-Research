@@ -64,9 +64,14 @@ export async function debateStream(
   signal?: AbortSignal,
   assetType: "equity" | "crypto" = "equity",
   contexts: ResearchContextItem[] = [],
+  researchSkills: string[] = [],
+  researchSkillParameters: Record<string, Record<string, unknown>> = {},
 ): Promise<void> {
   const llm = requireLlm();
-  await streamNdjson("/api/debate", { code, rounds, llm, locale: getLocale(), asset_type: assetType, additional_contexts: contexts }, (ev) => dispatchDebate(ev, handlers), signal);
+  await streamNdjson("/api/debate", {
+    code, rounds, llm, locale: getLocale(), asset_type: assetType, additional_contexts: contexts,
+    research_skills: researchSkills, research_skill_parameters: researchSkillParameters,
+  }, (ev) => dispatchDebate(ev, handlers), signal);
 }
 
 export interface ResearchTeamHandlers extends Omit<DebateHandlers, "onStageStart" | "onDelta" | "onStageDone" | "onError"> {
@@ -83,11 +88,17 @@ export async function researchTeamStream(
   assetType: "equity" | "crypto" = "equity",
   contexts: ResearchContextItem[] = [],
   positionInstrumentKey?: string,
+  includePositionPreferences = false,
+  researchSkills: string[] = [],
+  researchSkillParameters: Record<string, Record<string, unknown>> = {},
 ): Promise<void> {
   const llm = requireLlm();
   await streamNdjson("/api/research-team", {
     code, llm, locale: getLocale(), asset_type: assetType, additional_contexts: contexts,
     position_instrument_key: positionInstrumentKey || null,
+    include_position_preferences: Boolean(positionInstrumentKey && includePositionPreferences),
+    research_skills: researchSkills,
+    research_skill_parameters: researchSkillParameters,
   }, (ev) => dispatchDebate(ev, handlers as DebateHandlers), signal);
 }
 

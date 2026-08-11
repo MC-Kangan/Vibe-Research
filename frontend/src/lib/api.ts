@@ -59,6 +59,11 @@ export interface ResearchSkillsResponse {
   detail?: string;
   skills: ResearchSkill[];
 }
+export interface ResearchSkillDefaults {
+  equity: string[];
+  crypto: string[];
+  updated_at: string | null;
+}
 export interface ResearchRunResult {
   skill: string;
   status: "complete" | "failed";
@@ -623,6 +628,9 @@ export const api = {
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   myReports: () => get<MyReport[]>("/myreports"),
   researchSkills: () => get<ResearchSkillsResponse>("/research/skills"),
+  researchSkillDefaults: () => get<ResearchSkillDefaults>("/research/skill-defaults"),
+  saveResearchSkillDefaults: (assetType: "equity" | "crypto", skills: string[]) =>
+    request<ResearchSkillDefaults>("/research/skill-defaults", "PUT", { asset_type: assetType, skills }),
   runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}, assetType: "equity" | "crypto" = "equity") =>
     request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters, asset_type: assetType }),
   extractResearchContexts: (files: Array<{ name: string; content_b64: string }>) =>

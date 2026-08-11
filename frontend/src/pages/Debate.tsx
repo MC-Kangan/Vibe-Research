@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Swords, Play, Square, Save, CheckCircle2, Circle, AlertTriangle, Users, BriefcaseBusiness } from "lucide-react";
+import { Swords, Play, Square, Save, CheckCircle2, Circle, AlertTriangle, Users, BriefcaseBusiness, ListChecks } from "lucide-react";
 import { SafeMarkdown } from "@/components/ui/SafeMarkdown";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -8,7 +8,7 @@ import { Disclaimer } from "@/components/ui/Disclaimer";
 import { ContextTray, type ContextEntry } from "@/components/research/ContextTray";
 import { debateStream, researchTeamStream, type DebateStage, type ResearchTeamStage } from "@/lib/agents";
 import { addNote } from "@/lib/notes";
-import { ApiError, api, type IbkrInstrument, type PositionPreferences, type RealPositionSnapshot } from "@/lib/api";
+import { ApiError, api, type IbkrInstrument, type PositionPreferences, type RealPositionSnapshot, type ResearchSkill } from "@/lib/api";
 import { normalizeCryptoSymbol, normalizeStockSymbol } from "@/lib/market-symbols";
 import { portfolioNumber, portfolioRatioPercent, portfolioSigned } from "@/lib/portfolio-format";
 import { useLocale, type Locale } from "@/lib/i18n";
@@ -50,7 +50,11 @@ const DOSSIER_TITLE_ZH: Record<string, string> = {
   "Financial and valuation metrics (European source not integrated)": "财务与估值指标（欧洲数据源尚未接入）",
   "Company announcements and filings (unified European source not integrated)": "公司公告与文件（欧洲统一数据源尚未接入）",
 };
-const dossierTitle = (title: string, locale: Locale) => locale === "en" ? title : (DOSSIER_TITLE_ZH[title] || title);
+const dossierTitle = (title: string, locale: Locale) => {
+  if (locale === "en") return title;
+  if (title.startsWith("Deterministic skill · ")) return title.replace("Deterministic skill", "确定性技能");
+  return DOSSIER_TITLE_ZH[title] || title;
+};
 
 export function Debate() {
   const { locale, tr } = useLocale();
@@ -61,11 +65,17 @@ export function Debate() {
   const [rounds, setRounds] = useState(1);
   const [contexts, setContexts] = useState<ContextEntry[]>([]);
   const [usePosition, setUsePosition] = useState(params.get("position_context") === "1");
+  const [includePreferences, setIncludePreferences] = useState(false);
   const [positions, setPositions] = useState<IbkrInstrument[]>([]);
   const [snapshot, setSnapshot] = useState<RealPositionSnapshot | null>(null);
   const [preferences, setPreferences] = useState<PositionPreferences | null>(null);
   const [selectedPosition, setSelectedPosition] = useState(params.get("position") || "");
   const [positionError, setPositionError] = useState("");
+  const [skillCatalog, setSkillCatalog] = useState<ResearchSkill[]>([]);
+  const [selectedResearchSkills, setSelectedResearchSkills] = useState<string[]>([]);
+  const [defaultResearchSkills, setDefaultResearchSkills] = useState<string[]>([]);
+  const [skillCatalogStatus, setSkillCatalogStatus] = useState("");
+  const [skillDefaultStatus, setSkillDefaultStatus] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState<{ title: string; ok: boolean }[]>([]);
@@ -75,6 +85,38 @@ export function Debate() {
   const [saved, setSaved] = useState(false);
   const [completed, setCompleted] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.researchSkills().then(async (payload) => {
+      if (cancelled) return;
+      const supported = payload.skills.filter((skill) => (skill.supported_asset_types || ["equity"]).includes(assetType));
+      setSkillCatalog(supported);
+      setSkillCatalogStatus(payload.configured ? "" : tr("TradeAgent skills are not configured", "TradeAgent 技能尚未配置"));
+      try {
+        const defaults = await api.researchSkillDefaults();
+        if (cancelled) return;
+        const savedDefaults = defaults[assetType].filter((name) => supported.some((skill) => skill.name === name));
+        setDefaultResearchSkills(savedDefaults);
+        setSelectedResearchSkills(savedDefaults);
+        setSkillDefaultStatus("");
+      } catch (reason) {
+        if (cancelled) return;
+        setDefaultResearchSkills([]);
+        setSelectedResearchSkills([]);
+        setSkillDefaultStatus(reason instanceof ApiError && reason.status === 404
+          ? tr("Restart the Vibe backend to enable saved defaults", "请重启 Vibe 后端以启用默认技能保存")
+          : tr("Defaults are temporarily unavailable; skills can still be selected for this run", "默认技能暂不可用；本次仍可手动选择技能"));
+      }
+    }).catch((reason) => {
+      if (cancelled) return;
+      setSkillCatalog([]);
+      setSelectedResearchSkills([]);
+      setDefaultResearchSkills([]);
+      setSkillCatalogStatus(reason instanceof ApiError ? reason.message : tr("Unable to load TradeAgent skills", "无法加载 TradeAgent 技能"));
+    });
+    return () => { cancelled = true; };
+  }, [assetType]);
 
   useEffect(() => {
     if (!usePosition || mode !== "team") return;
@@ -96,7 +138,7 @@ export function Debate() {
     ? Math.abs(selectedSnapshotRow.reporting_market_value) / Math.abs(snapshot.summary.nav) : null;
 
   const reset = () => { setStatus(""); setProgress([]); setMissing([]); setStages([]); setError(""); setSaved(false); setCompleted(false); };
-  const switchMode = (next: Mode) => { if (running) return; setMode(next); reset(); if (next === "debate") setUsePosition(false); };
+  const switchMode = (next: Mode) => { if (running) return; setMode(next); reset(); if (next === "debate") { setUsePosition(false); setIncludePreferences(false); } };
 
   async function start() {
     const c = assetType === "crypto" ? normalizeCryptoSymbol(code) : normalizeStockSymbol(code);
@@ -119,8 +161,8 @@ export function Debate() {
       onDone: () => { streamDone = true; setCompleted(true); },
     };
     try {
-      if (mode === "team") await researchTeamStream(c, handlers, ctrl.signal, assetType, cleanContexts, usePosition ? selectedPosition : undefined);
-      else await debateStream(c, rounds, handlers, ctrl.signal, assetType, cleanContexts);
+      if (mode === "team") await researchTeamStream(c, handlers, ctrl.signal, assetType, cleanContexts, usePosition ? selectedPosition : undefined, usePosition && includePreferences, selectedResearchSkills);
+      else await debateStream(c, rounds, handlers, ctrl.signal, assetType, cleanContexts, selectedResearchSkills);
       setStatus(streamDone
         ? `${mode === "team" ? tr("Research team", "研究团队") : tr("Debate", "辩论")} ${streamHadError ? tr("partially completed", "部分完成") : tr("completed", "完成")}`
         : `${mode === "team" ? tr("Research team", "研究团队") : tr("Debate", "辩论")} ${tr("did not complete", "未完整结束")}`);
@@ -131,6 +173,17 @@ export function Debate() {
   }
 
   const stop = () => { abortRef.current?.abort(); setRunning(false); };
+  const saveSkillDefaults = async (skills: string[]) => {
+    setSkillDefaultStatus(tr("Saving defaults…", "正在保存默认技能…"));
+    try {
+      const saved = await api.saveResearchSkillDefaults(assetType, skills);
+      const next = saved[assetType].filter((name) => skillCatalog.some((skill) => skill.name === name));
+      setDefaultResearchSkills(next);
+      setSkillDefaultStatus(skills.length ? tr("Defaults saved", "默认技能已保存") : tr("Defaults cleared", "默认技能已清除"));
+    } catch (reason) {
+      setSkillDefaultStatus(reason instanceof ApiError ? reason.message : tr("Unable to save defaults", "无法保存默认技能"));
+    }
+  };
   const finished = completed && stages.length > 0 && stages.every((item) => item.done);
   const save = () => {
     const body = [contexts.length ? `${tr("Supplemental materials: ", "补充材料：")}${contexts.map((item) => item.name).join(", ")}` : "", ...stages.map((item) => `## ${item.label}\n\n${item.content}`)].filter(Boolean).join("\n\n---\n\n");
@@ -152,13 +205,34 @@ export function Debate() {
         {running ? <button onClick={stop} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-4 py-2 text-sm hover:text-destructive"><Square className="h-4 w-4" />{tr("Stop", "中止")}</button> : <button onClick={start} className="inline-flex items-center gap-1.5 rounded-lg bg-primary/90 px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary"><Play className="h-4 w-4" />{mode === "team" ? tr("Start research team", "启动研究团队") : tr("Start debate", "开始辩论")}</button>}
         {finished && !running && <button onClick={save} disabled={saved} className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 px-4 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"><Save className="h-4 w-4" />{saved ? tr("Saved to notes", "已存入沉淀") : tr("Save to notes", "存入沉淀")}</button>}
       </div>
+      <div className="mt-4 rounded-xl border border-border/50 bg-background/20 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div><h3 className="text-sm font-semibold">{tr("Reusable deterministic evidence", "可复用的确定性分析")}</h3><p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{tr("Choose approved TradeAgent skills to compute once. Their identical read-only results are added to the shared dossier for every debate role and the research team.", "选择获准的 TradeAgent 技能并只计算一次；相同的只读结果会加入共享底稿，供所有辩论角色和研究团队使用。")}</p></div>
+          {selectedResearchSkills.length > 0 && <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] text-primary">{selectedResearchSkills.length} {tr("selected", "项已选")}</span>}
+        </div>
+        {skillCatalog.length > 0 ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{skillCatalog.map((skill) => {
+          const checked = selectedResearchSkills.includes(skill.name);
+          return <label key={skill.name} className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-xs transition-colors ${checked ? "border-primary/40 bg-primary/[0.06]" : "border-border/50"}`}><input type="checkbox" className="mt-0.5" checked={checked} disabled={running} onChange={() => setSelectedResearchSkills((current) => checked ? current.filter((name) => name !== skill.name) : [...current, skill.name])} /><span><span className="flex flex-wrap items-center gap-1"><strong className="font-medium text-foreground">{skill.name}</strong>{defaultResearchSkills.includes(skill.name) && <span className="rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">{tr("default", "默认")}</span>}</span><span className="mt-0.5 block line-clamp-2 text-[11px] text-muted-foreground">{skill.description}</span></span></label>;
+        })}</div> : <p className="mt-2 text-xs text-muted-foreground">{skillCatalogStatus || tr("No approved skills support this asset type.", "没有获准技能支持该资产类型。")}</p>}
+        {skillCatalog.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" disabled={running} onClick={() => saveSkillDefaults(selectedResearchSkills)} className="rounded-lg border border-border/60 px-2.5 py-1.5 text-[11px] hover:border-primary/40 disabled:opacity-50">{tr("Save selection as defaults", "将当前选择设为默认")}</button>{defaultResearchSkills.length > 0 && <button type="button" disabled={running} onClick={() => saveSkillDefaults([])} className="rounded-lg px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50">{tr("Clear defaults", "清除默认")}</button>}{skillDefaultStatus && <span className="text-[10px] text-muted-foreground">{skillDefaultStatus}</span>}</div>}
+        <p className="mt-2 text-[10px] text-muted-foreground/70">{tr("Defaults are preselected, never forced. Uncheck them for one run or add other skills; unselected skills are not run. The AI cannot alter calculations or execute orders.", "默认技能只会预先勾选，不会被强制运行；你可以为本次分析取消或增加技能，未选择的技能不会运行。AI 无法修改计算或执行订单。")}</p>
+      </div>
       {mode === "team" && <div className="mt-4 rounded-xl border border-border/50 bg-background/20 p-3">
-        <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={usePosition} onChange={(event) => { setUsePosition(event.target.checked); setPositionError(""); }} disabled={running || assetType === "crypto"} /> <BriefcaseBusiness className="h-4 w-4 text-primary" />{tr("Use one open-position context", "使用单个开放持仓上下文")}</label>
+        <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={usePosition} onChange={(event) => { setUsePosition(event.target.checked); if (!event.target.checked) setIncludePreferences(false); setPositionError(""); }} disabled={running || assetType === "crypto"} /> <BriefcaseBusiness className="h-4 w-4 text-primary" />{tr("Use one open-position context", "使用单个开放持仓上下文")}</label>
         {usePosition && <div className="mt-3"><select value={selectedPosition} onChange={(event) => { const key = event.target.value; setSelectedPosition(key); const selected = positions.find((item) => item.instrument_key === key); if (selected?.provider_symbol) { setCode(selected.provider_symbol); setAssetType("equity"); } }} disabled={running} className="w-full rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-sm"><option value="">{tr("Choose an open position", "选择开放持仓")}</option>{positions.map((item) => <option key={item.instrument_key} value={item.instrument_key}>{item.symbol} · {item.name} · {item.quantity ?? "—"} · {item.venue || item.currency}</option>)}</select>
-          {selectedInstrument && <div className="mt-2 rounded-lg bg-muted/20 p-2 text-[11px] leading-relaxed text-muted-foreground"><strong className="text-foreground">{tr("Sending:", "将发送：")}</strong> {selectedInstrument.provider_symbol} · {selectedInstrument.venue || tr("Exchange unavailable", "交易所未提供")} · {selectedInstrument.currency} · {tr("Quantity", "数量")} {portfolioNumber(selectedSnapshotRow?.quantity ?? selectedInstrument.quantity)} · {tr("Cost", "成本")} {portfolioNumber(selectedSnapshotRow?.average_cost ?? selectedInstrument.average_cost)} · {tr("Mark", "标记价")} {portfolioNumber(selectedSnapshotRow?.latest_price)} · {tr("Unrealised P&L", "未实现盈亏")} {portfolioSigned(selectedSnapshotRow?.unrealized_pnl)} · NAV {portfolioNumber(snapshot?.summary.nav)} {snapshot?.summary.reporting_currency || ""} · {tr("NAV weight", "NAV占比")} {portfolioRatioPercent(selectedWeight)} · {tr("Snapshot", "快照")} {snapshot?.report_date || "—"}. {tr("No other positions are sent.", "不会发送其他持仓。")}<div className="mt-1"><strong className="text-foreground">{tr("Investment goals and risk preferences:", "投资目标与风险偏好：")}</strong>{preferences?.items.length ? <ul className="ml-4 list-disc">{preferences.items.map((item) => <li key={item}>{item}</li>)}</ul> : tr(" Not set", " 未设置")}</div></div>}
+          <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-border/50 p-2 text-xs"><input type="checkbox" className="mt-0.5" checked={includePreferences} onChange={(event) => setIncludePreferences(event.target.checked)} disabled={running || !preferences?.items.length} /><span><strong className="font-medium text-foreground">{tr("Also include investment goals and risk preferences", "同时包含投资目标与风险偏好")}</strong><span className="mt-0.5 block text-[11px] text-muted-foreground">{preferences?.items.length ? tr("Optional portfolio-wide context; leave off when it is not relevant to this position.", "这是可选的组合层面上下文；若与该持仓无关，请保持关闭。") : tr("No saved preferences are available on the Portfolio page.", "「我的持仓」尚未保存目标或风险偏好。")}</span></span></label>
+          {selectedInstrument && <div className="mt-2 rounded-lg bg-muted/20 p-2 text-[11px] leading-relaxed text-muted-foreground"><strong className="text-foreground">{tr("Sending:", "将发送：")}</strong> {selectedInstrument.provider_symbol} · {selectedInstrument.venue || tr("Exchange unavailable", "交易所未提供")} · {selectedInstrument.currency} · {tr("Quantity", "数量")} {portfolioNumber(selectedSnapshotRow?.quantity ?? selectedInstrument.quantity)} · {tr("Cost", "成本")} {portfolioNumber(selectedSnapshotRow?.average_cost ?? selectedInstrument.average_cost)} · {tr("Mark", "标记价")} {portfolioNumber(selectedSnapshotRow?.latest_price)} · {tr("Unrealised P&L", "未实现盈亏")} {portfolioSigned(selectedSnapshotRow?.unrealized_pnl)} · NAV {portfolioNumber(snapshot?.summary.nav)} {snapshot?.summary.reporting_currency || ""} · {tr("NAV weight", "NAV占比")} {portfolioRatioPercent(selectedWeight)} · {tr("Snapshot", "快照")} {snapshot?.report_date || "—"}. {tr("No other positions are sent.", "不会发送其他持仓。")}<div className="mt-1"><strong className="text-foreground">{tr("Investment goals and risk preferences:", "投资目标与风险偏好：")}</strong>{includePreferences ? (preferences?.items.length ? <ul className="ml-4 list-disc">{preferences.items.map((item) => <li key={item}>{item}</li>)}</ul> : tr(" Not set", " 未设置")) : tr(" Not included", " 未包含")}</div></div>}
         </div>}
         {positionError && <p className="mt-2 text-xs text-destructive">{positionError}</p>}
       </div>}
+      <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/[0.04] p-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold"><ListChecks className="h-4 w-4 text-sky-400" />{tr("Before you run: useful context", "开始前：哪些信息最有帮助")}</h3>
+        <div className="mt-2 grid gap-3 text-xs leading-relaxed text-muted-foreground md:grid-cols-2">
+          <div><p className="font-medium text-foreground">{tr("Vibe fetches automatically", "Vibe 会自动获取")}</p><p className="mt-1">{assetType === "crypto" ? tr("Price/volume history plus available market-cap, supply and market-wide context.", "价格与成交量历史，以及可用的市值、供应量和全市场上下文。") : tr("Price/volume, available financials and valuation, filings/announcements, earnings, news and research reports. Any unavailable source is listed during the run.", "价格与成交量、可用的财务和估值、监管文件/公告、盈利、新闻与研报。运行时仍会列出未取到的数据源。")}</p></div>
+          <div><p className="font-medium text-foreground">{tr("Most useful to add", "建议补充")}</p><ul className="mt-1 ml-4 list-disc space-y-0.5"><li>{tr("Your question, thesis, assumptions and intended time horizon", "你的核心问题、投资逻辑、关键假设与关注周期")}</li><li>{tr("Earnings-call transcripts, broker/industry notes or competitor evidence not available publicly", "公开源未覆盖的业绩会纪要、券商/行业笔记或竞品证据")}</li><li>{tr("Position rationale or instrument-specific constraints; portfolio goals only when the separate checkbox is relevant", "该持仓的建仓逻辑或标的特有限制；组合目标仅在相关时单独勾选")}</li></ul></div>
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground/70">{assetType === "crypto" ? tr("Current known gaps: on-chain flows and token-unlock data. Add dated sources if these matter.", "当前已知缺口：链上资金流和代币解锁数据；若相关，请上传带日期和来源的材料。") : tr("European financials/filings and long-term analyst consensus may be incomplete until more sources are configured. Date and name uploaded sources, and never upload API keys, passwords or full account statements.", "在更多数据源接入前，欧洲公司财务/公告和长期一致预期可能不完整。请为材料标注日期与来源，不要上传 API key、密码或完整账户报表。")}</p>
+      </div>
       <ContextTray entries={contexts} onChange={setContexts} disabled={running} />
       {!running && !status && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/70">⏱ {mode === "team" ? tr("Four model calls: three specialists and one neutral lead.", "研究团队共 4 次模型调用：3 位专项研究员 + 1 位中立负责人。") : rounds === 2 ? tr("Approximately five model calls.", "两轮约 5 次模型调用。") : tr("Approximately three model calls.", "一轮约 3 次模型调用。")} {tr("The objective dossier is retrieved once.", "客观底稿只拉取一次。")}</p>}
       {status && <p className="mt-3 text-xs text-muted-foreground">{status}</p>}

@@ -37,6 +37,8 @@ Hard rules:
   source, market, exchange-qualified symbol, date and important data gaps.
 - Do not substitute a same-named instrument from another exchange. For overseas
   securities preserve provider symbols such as SMH.L, VOD.L or SAP.DE.
+- Treat deterministic TradeAgent skill output as descriptive research evidence,
+  not as a recommendation or permission to trade.
 - Provide information organisation and multi-perspective analysis only: no target
   prices, return promises or personalised order instructions.
 - Keep the answer concise. The runtime output-language instruction determines the
@@ -98,10 +100,10 @@ MARKET = ("query_market", "query_news_radar")
 SECTOR = ("query_concepts", "query_industry_comparison", "query_industry_reports", "query_news_radar", "query_market")
 
 _ALL_RESEARCH = tuple(tools.TOOL_NAMES)
-_COMPANY_RESEARCH = tuple(dict.fromkeys((*A_SHARE_COMPANY, *GLOBAL_COMPANY, *CRYPTO, *MARKET)))
+_COMPANY_RESEARCH = tuple(dict.fromkeys((*A_SHARE_COMPANY, *GLOBAL_COMPANY, *CRYPTO, *MARKET, "run_research_skill")))
 _PORTFOLIO_RESEARCH = tuple(dict.fromkeys((
     "query_quote", "query_kline", "query_financials", "query_news", "query_announcements",
-    *GLOBAL_COMPANY, *CRYPTO, "query_market",
+    *GLOBAL_COMPANY, *CRYPTO, "query_market", "run_research_skill",
 )))
 _INTELLIGENCE = (
     "query_news_radar", "query_news", "query_announcements", "query_investor_qa",

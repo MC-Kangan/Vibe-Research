@@ -145,6 +145,15 @@ TOOLS: list[dict] = [
        "查港股现金流量表：经营/投资/筹资活动现金流净额、现金及等价物净增加、期初/期末现金，多期、附同比。仅港股，代码用数字如 00700。",
        {"symbol": {"type": "string", "description": "港股代码，如 00700"}},
        ["symbol"]),
+    _t("run_research_skill",
+       "运行一个获准的 TradeAgent 确定性研究技能，返回可复用的技术、风险或状态指标。结果是只读研究证据，不是交易指令。必须使用带交易所后缀的海外代码。",
+       {
+           "symbol": {"type": "string", "description": "A股代码、美股代码、带交易所后缀的欧洲代码或加密货币代码"},
+           "skill": {"type": "string", "enum": ["worth-buy-stocks", "markov-method", "technical-basic", "risk-analysis", "volatility-regime"]},
+           "asset_type": {"type": "string", "enum": ["equity", "crypto"], "description": "默认 equity"},
+           "parameters": {"type": "object", "description": "可选技能参数；省略时使用技能默认值"},
+       },
+       ["symbol", "skill"]),
 ]
 
 TOOL_NAMES = [t["function"]["name"] for t in TOOLS]
@@ -370,6 +379,21 @@ def _radar(args: dict):
             "tracks": [i.get("name") for i in (d.get("industries") or [])], "items": out}
 
 
+def _research_skill(args: dict):
+    # Lazy import avoids tools -> research -> tools circular import at startup.
+    import research as research_layer
+
+    parameters = args.get("parameters")
+    if parameters is not None and not isinstance(parameters, dict):
+        return {"error": "parameters must be an object"}
+    return research_layer.run_skill_for_ai(
+        symbol=str(args["symbol"]),
+        skill=str(args["skill"]),
+        asset_type=str(args.get("asset_type") or "equity"),
+        parameters=parameters,
+    )
+
+
 # name -> 执行函数。绝大多数是「调后端函数 + 裁剪」，复杂的抽成上面的私有函数。
 _HANDLERS = {
     "query_quote": lambda a: astock.tencent_quote([str(c) for c in a.get("codes", [])]),
@@ -412,6 +436,7 @@ _HANDLERS = {
     "query_us_filings": lambda a: market_data.get_filings(str(a.get("symbol", "")), 15),
     "query_us_sec_facts": lambda a: market_data.get_company_facts(str(a.get("symbol", ""))),
     "query_hk_cashflow": lambda a: gstock.hk_cashflow(str(a.get("symbol", ""))) or {"error": "未找到该港股现金流（仅港股支持）"},
+    "run_research_skill": _research_skill,
 }
 
 

@@ -21,7 +21,7 @@ SPECIALISTS = {
     },
     "market": {
         "label": "Market and technical researcher",
-        "tools": {"query_quote", "query_kline", "query_market_snapshot", "query_market_bars", "query_crypto_snapshot", "query_crypto_bars", "query_crypto_context", "query_fund_flow", "query_margin", "query_concepts"},
+        "tools": {"query_quote", "query_kline", "query_market_snapshot", "query_market_bars", "query_crypto_snapshot", "query_crypto_bars", "query_crypto_context", "query_fund_flow", "query_margin", "query_concepts", "run_research_skill"},
         "focus": "price structure, volume, relative position, flows and market conditions",
     },
     "events": {
@@ -56,7 +56,7 @@ def _position_row(instrument: dict, snapshot: dict) -> dict | None:
     ))), None)
 
 
-def resolve_position(instrument_key: str) -> tuple[str, str, dict[str, Any]]:
+def resolve_position(instrument_key: str, include_preferences: bool = False) -> tuple[str, str, dict[str, Any]]:
     instrument = next((item for item in ibkr_analytics.list_instruments("open") if item["instrument_key"] == instrument_key), None)
     if not instrument:
         raise ValueError("The selected IBKR position does not exist or is closed")
@@ -72,7 +72,7 @@ def resolve_position(instrument_key: str) -> tuple[str, str, dict[str, Any]]:
     nav = snapshot.get("summary", {}).get("nav")
     value = row.get("reporting_market_value")
     weight = abs(float(value)) / abs(float(nav)) if value is not None and nav not in (None, 0) else None
-    preferences = position_preferences.get().get("items", [])
+    preferences = position_preferences.get().get("items", []) if include_preferences else []
     context = {
         "instrument_key": instrument_key,
         "provider_symbol": provider_symbol,
@@ -91,6 +91,7 @@ def resolve_position(instrument_key: str) -> tuple[str, str, dict[str, Any]]:
         "nav": nav,
         "portfolio_weight": weight,
         "report_date": snapshot.get("report_date"),
+        "preferences_included": include_preferences,
         "preferences": preferences,
     }
     lines = [
@@ -99,9 +100,13 @@ def resolve_position(instrument_key: str) -> tuple[str, str, dict[str, Any]]:
         f"Quantity: {context['quantity']}; cost: {context['average_cost']} ({context['cost_source']}); IBKR mark: {context['latest_price']}; unrealized P&L: {context['unrealized_pnl']} ({context['pnl_source']})",
         f"Converted market value: {value} {context['reporting_currency']}; NAV: {nav} {context['reporting_currency']}; NAV weight: {weight}",
         f"Snapshot date: {context['report_date']}",
-        "Investment objectives and risk preferences: " + ("; ".join(preferences) if preferences else "not configured"),
-        "Assess only how this position aligns with the user's objectives. Do not generate orders or position instructions.",
     ]
+    if include_preferences:
+        lines.append("Investment objectives and risk preferences: " + ("; ".join(preferences) if preferences else "not configured"))
+        lines.append("Assess how this position aligns with the supplied objectives without generating orders or position instructions.")
+    else:
+        lines.append("Portfolio-wide investment objectives and risk preferences were not included. Do not infer them or assess goal alignment.")
+        lines.append("Analyze this position without generating orders or position instructions.")
     return provider_symbol, "\n".join(lines), context
 
 
@@ -144,9 +149,18 @@ Never give recommendations, ratings, target prices, position sizes or return for
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def run_stream(cfg: dict, code: str, asset_type: str, contexts: list[dict[str, str]], position_text: str = ""):
+def run_stream(
+    cfg: dict,
+    code: str,
+    asset_type: str,
+    contexts: list[dict[str, str]],
+    position_text: str = "",
+    research_skills: list[str] | None = None,
+    research_skill_parameters: dict[str, dict] | None = None,
+):
     yield {"type": "status", "message": chat.localized_text(cfg, "Retrieving the objective evidence dossier…", "正在拉取客观事实底稿…")}
     dossier = yield from debate.collect_dossier(code, asset_type)
+    dossier = yield from debate.append_research_skills(dossier, research_skills, asset_type, research_skill_parameters, cfg)
     if not any(not isinstance(section["data"], str) for section in dossier["sections"]):
         yield {"type": "error", "message": chat.localized_text(cfg, "No objective data was available, so the research team cannot start.", "未能取到任何客观数据，无法启动研究团队")}
         return

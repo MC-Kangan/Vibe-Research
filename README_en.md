@@ -61,7 +61,7 @@ It does not make decisions for you. It pulls together quotes, analyst reports, v
 | 📊&nbsp;**Daily&nbsp;Review** | Index quotes · **Global markets** (Dow / S&P / Nasdaq overnight + Hang Seng / HS Tech) · Watchlist quotes · **Short-term sentiment** (consecutive limit-up ladder, seal rate, break rate, promotion rate) · **Market-wide turnover top 20** · Market breadth · Sector fund-flow trends · Sector rotation · One-click AI review |
 | 📡&nbsp;**News&nbsp;Radar** | 108 public RSS feeds across 12 tracks · AI-distilled "today's takeaways" · A-share filings and public news linked to your watchlist |
 | 🔍&nbsp;**Instrument&nbsp;Data** | Full A-share data plus exchange-aware public/Yahoo market data for US, European, HK and KR securities. Charts come first; TradeAgent supplies deterministic read-only Skills: equity-only `worth-buy-stocks`, plus cross-asset `markov-method`, `technical-basic`, `risk-analysis`, and `volatility-regime`. Markov includes a live regime ribbon, 3×3 transition matrix, stationary distribution and adjustable thresholds; the new skills cover technical confirmation, historical tail risk and volatility state. |
-| ⚔️&nbsp;**Multi-perspective&nbsp;Research** | Two controlled modes: **bull-vs-bear debate** and a **research team** with fundamentals, market-structure and event-risk specialists followed by a neutral lead. Every role shares one factual dossier and deliberately avoids trade instructions. Add multiple pasted notes or TXT / Markdown / text PDF files for one run. The team may explicitly include one open IBKR position and the saved investment goals/risk preferences. |
+| ⚔️&nbsp;**Multi-perspective&nbsp;Research** | Two controlled modes: **bull-vs-bear debate** and a **research team** with fundamentals, market-structure and event-risk specialists followed by a neutral lead. Every role shares one factual dossier and deliberately avoids trade instructions. Add multiple pasted notes or TXT / Markdown / text PDF files for one run. The team may explicitly include one open IBKR position, with a separate opt-in for portfolio-wide goals/risk preferences. |
 | ⭐&nbsp;**Watchlist** | **Paste a whole batch of tickers at once** (commas, spaces or newlines) · one-screen table (price, change, PE, PB, turnover) · **live quotes toggle** (top right, off by default; refreshes every 3s during trading hours, auto-pauses outside them and when the tab is hidden) · hand the whole list to your AI. Stored locally |
 | 🧩&nbsp;**Sectors** | Sector and value-chain skeletons |
 | 💼&nbsp;**Portfolio** | Stock / crypto / cash overview · read-only IBKR Flex sync · allocation · flow-adjusted performance and drawdown · P&L calendar · latest contributors · broker reconciliation · automatic trade ledger · per-position candles with cost and execution markers · read-only Coinbase balances and manual crypto wallets · persistent goals and risk preferences. Manual stock records remain in a separate view. |
@@ -331,8 +331,22 @@ The page provides two deliberately small multi-agent workflows with the same saf
 
 The team can include one explicitly selected open IBKR position. Before a run,
 the UI previews the exchange-aware symbol, quantity, cost, mark, unrealized P&L,
-NAV weight, snapshot date, and the saved investment goals/risk preferences.
-Other positions are not included implicitly.
+NAV weight and snapshot date. Other positions are not included implicitly.
+Portfolio-wide investment goals and risk preferences have their own switch and
+are off by default, so they are sent only when relevant to the position.
+
+Both the debate and research team can explicitly multi-select approved
+TradeAgent skills. The current selection can be saved as separate equity or
+crypto defaults. Defaults are only preselected and can still be removed or
+extended for an individual run; unselected skills are not executed. They are
+stored under `VR_DATA_DIR`, so they survive restarts and apply to other devices
+using the same deployment. Vibe prepares market data once, computes each selected skill once, and
+adds the identical read-only result to the shared dossier; for example,
+`technical-basic` becomes common technical evidence for both bull and bear
+roles. Controlled API-model workflows can also call the `run_research_skill`
+Vibe Method when needed. The allowlist, asset-type checks and exchange-aware
+symbols still apply, no orders are executed, and CLI providers remain
+context-only rather than calling tools themselves.
 
 ### Multiple supplemental contexts
 

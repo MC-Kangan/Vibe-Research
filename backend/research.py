@@ -148,6 +148,164 @@ def run_skill(
     return payload
 
 
+def _compact_analyst_result_for_ai(result: dict[str, Any]) -> dict[str, Any]:
+    presentation = result.get("presentation")
+    compact_presentation: Any = presentation
+    if isinstance(presentation, dict):
+        compact_presentation = {
+            key: compact_report_for_ai(item)
+            for key, item in presentation.items()
+            if key not in {"price_bars", "regime_points"}
+        }
+        if isinstance(presentation.get("price_bars"), list):
+            compact_presentation["price_bar_count"] = len(presentation["price_bars"])
+        if isinstance(presentation.get("regime_points"), list):
+            points = presentation["regime_points"]
+            compact_presentation["regime_point_count"] = len(points)
+            compact_presentation["recent_regime_points"] = [
+                compact_report_for_ai(item) for item in points[-12:]
+            ]
+
+    observations = []
+    for item in result.get("observations") or []:
+        if not isinstance(item, dict):
+            continue
+        observation = {
+            key: compact_report_for_ai(item.get(key))
+            for key in ("metric", "value", "source", "observed_at")
+            if item.get(key) is not None
+        }
+        provenance = item.get("provenance")
+        if isinstance(provenance, dict):
+            compact_provenance = {
+                key: provenance.get(key)
+                for key in ("algorithm", "window", "point_count", "start_at", "end_at", "input_provider_kind")
+                if provenance.get(key) is not None
+            }
+            if compact_provenance:
+                observation["provenance"] = compact_provenance
+        observations.append(observation)
+
+    # Put presentation and observations before secondary metadata.  Dossier
+    # rendering is bounded, so this ordering guarantees that benchmark status,
+    # factor scores and confirmation checks reach the model first.
+    return {
+        "analyst": result.get("analyst"),
+        "status": result.get("status"),
+        "signal": result.get("signal"),
+        "summary": result.get("summary"),
+        "presentation": compact_presentation,
+        "observations": observations,
+        "missing_metrics": compact_report_for_ai(result.get("missing_metrics") or []),
+        "limitations": compact_report_for_ai(result.get("limitations") or []),
+        "methods": compact_report_for_ai(result.get("methods") or []),
+        "inference": result.get("inference"),
+    }
+
+
+def compact_report_for_ai(value: Any) -> Any:
+    """Bound TradeAgent output before it enters an LLM context.
+
+    Reports may contain hundreds of chart points.  The UI keeps the full report,
+    while AI workflows need the conclusions, tables and only a small recent
+    sample of long arrays.
+    """
+    if isinstance(value, dict) and isinstance(value.get("results"), list):
+        return {
+            "instrument": compact_report_for_ai(value.get("instrument")),
+            "generated_at": value.get("generated_at"),
+            "results": [
+                _compact_analyst_result_for_ai(item)
+                for item in value["results"]
+                if isinstance(item, dict)
+            ],
+        }
+    if isinstance(value, dict):
+        return {str(key): compact_report_for_ai(item) for key, item in value.items()}
+    if isinstance(value, list):
+        items = [compact_report_for_ai(item) for item in value]
+        if len(items) > 30:
+            return {"total_items": len(items), "recent_items": items[-30:]}
+        return items
+    if isinstance(value, str) and len(value) > 2_000:
+        return value[:2_000] + "…"
+    return value
+
+
+def run_skills_shared(
+    *,
+    symbol: str,
+    skills: list[str],
+    parameters: dict[str, dict[str, Any]] | None = None,
+    asset_type: str = "equity",
+) -> dict[str, Any]:
+    """Run approved skills against one shared, market-qualified price payload."""
+    selected = list(dict.fromkeys(skills))
+    if not selected:
+        return {"symbol": symbol, "market": "", "results": []}
+    unknown = [skill for skill in selected if skill not in ALLOWED_SKILLS]
+    if unknown:
+        raise ResearchClientError(f"Selected skills are not enabled: {', '.join(unknown)}")
+    if not configured():
+        raise ResearchClientError("TradeAgent is not configured")
+
+    skill_parameters = parameters or {}
+    catalog = list_skills()
+    validate_skill_support(selected, asset_type, catalog)
+    inputs = build_run_inputs(symbol, selected, skill_parameters, asset_type)
+    completed: dict[str, dict[str, Any]] = {}
+    failures: dict[str, str] = {}
+
+    def execute(skill: str) -> tuple[str, dict[str, Any]]:
+        report = run_skill(
+            skill=skill,
+            symbol=inputs["symbol"],
+            market=inputs["market"],
+            skill_parameters=skill_parameters,
+            price_series=inputs["price_series"],
+            asset_type=asset_type,
+        )
+        return skill, compact_report_for_ai(report)
+
+    with ThreadPoolExecutor(max_workers=min(4, len(selected))) as executor:
+        futures = {executor.submit(execute, skill): skill for skill in selected}
+        for future in as_completed(futures):
+            requested_skill = futures[future]
+            try:
+                skill, report = future.result()
+                completed[skill] = report
+            except Exception as exc:  # noqa: BLE001 — one reusable skill must not hide other evidence
+                failures[requested_skill] = str(exc)
+
+    return {
+        "symbol": inputs["symbol"],
+        "market": inputs["market"],
+        "asset_type": asset_type,
+        "results": [
+            ({"skill": skill, "status": "complete", "report": completed[skill]}
+             if skill in completed else
+             {"skill": skill, "status": "failed", "detail": failures.get(skill, "Skill failed")})
+            for skill in selected
+        ],
+    }
+
+
+def run_skill_for_ai(
+    *,
+    symbol: str,
+    skill: str,
+    parameters: dict[str, Any] | None = None,
+    asset_type: str = "equity",
+) -> dict[str, Any]:
+    """Controlled Vibe-method bridge used by function-calling AI workflows."""
+    return run_skills_shared(
+        symbol=symbol,
+        skills=[skill],
+        parameters={skill: parameters or {}},
+        asset_type=asset_type,
+    )
+
+
 def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[str, Any]], asset_type: str = "equity") -> dict[str, Any]:
     """Resolve one target and all default skill benchmarks into one shared payload."""
     canonical = (symbol or "").strip().upper()

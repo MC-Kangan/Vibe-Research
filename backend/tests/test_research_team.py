@@ -143,3 +143,9 @@ def test_position_context_contains_only_selected_position(monkeypatch):
     assert context["portfolio_weight"] == pytest.approx(0.15)
     assert "Secret other position" not in text
     assert "SMH.L" in text
+    assert "Max drawdown 15%" not in text
+    assert context["preferences_included"] is False
+
+    _, text_with_preferences, context_with_preferences = research_team.resolve_position("selected", True)
+    assert "Max drawdown 15%" in text_with_preferences
+    assert context_with_preferences["preferences_included"] is True
