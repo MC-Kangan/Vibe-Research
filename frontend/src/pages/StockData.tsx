@@ -298,6 +298,7 @@ export function StockData() {
         subtitle="股票与加密货币共享行情、图表和兼容技能；专项数据按能力明确区分"
         actions={(val || gstock || marketSnapshot) && (
           <AskAiButton
+            workflow="stock"
             context={marketSnapshot ? marketAiContext : gstock ? gAiContext : aiContext}
             // 本页不换路由就能换标的，必须按代码分开存对话，否则会串台。
             // ⚠️ 用**已解析结果**的代码，不能用输入框的 code——后者一边打字一边变，

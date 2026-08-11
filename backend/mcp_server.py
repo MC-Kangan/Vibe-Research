@@ -1,8 +1,7 @@
-"""Vibe-Research MCP server —— 把 A股数据工具暴露给 Claude Code 等 agent。
+"""Vibe-Research MCP server —— 把统一只读数据工具暴露给外部 agent。
 
-零第三方依赖（纯标准库 JSON-RPC over stdio），复用 astock 数据层 +
-chat.py 里的工具定义。给「订阅接入 / 高手」通道用：agent 用自己的
-订阅额度直接调数据、多步分析，不占本产品成本。
+传输层使用标准库 JSON-RPC over stdio，工具定义和执行统一复用 tools.py。
+这是独立的高级入口；网页内 AI 仍按 ai_workflows.py 的白名单运行。
 
 挂进 Claude Code：
     claude mcp add vibe-research -- /路径/backend/.venv/bin/python /路径/backend/mcp_server.py
@@ -15,19 +14,19 @@ from __future__ import annotations
 import json
 import sys
 
-import chat  # 复用 TOOLS 定义 + _exec_tool 执行逻辑（内含 astock）
+import tools
 
-SERVER_INFO = {"name": "vibe-research", "version": "0.2.2"}
+SERVER_INFO = {"name": "vibe-research", "version": "0.3.0"}
 DEFAULT_PROTOCOL = "2024-11-05"
 
-# 把 chat.TOOLS（OpenAI 格式）转成 MCP 的 {name, description, inputSchema}
+# 把统一工具注册表（OpenAI 格式）转成 MCP 的 {name, description, inputSchema}
 MCP_TOOLS = [
     {
         "name": t["function"]["name"],
         "description": t["function"]["description"],
         "inputSchema": t["function"]["parameters"],
     }
-    for t in chat.TOOLS
+    for t in tools.TOOLS
 ]
 
 
@@ -74,7 +73,7 @@ def _handle(msg: dict) -> None:
         params = msg.get("params") or {}
         name = params.get("name", "")
         args = params.get("arguments") or {}
-        data = chat._exec_tool(name, args)
+        data = tools.exec_tool(name, args)
         is_error = isinstance(data, dict) and "error" in data
         _result(rid, {
             "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],

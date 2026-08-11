@@ -105,7 +105,7 @@ Vibe-Research 把三套公开数据源**直接集成进仓库**——`git clone`
 
 ## 架构
 
-一套数据层 + 两条 AI 出口：
+一套数据层 + 受控工作流 + 两条模型出口：
 
 ```
 Vibe-Research/
@@ -117,8 +117,9 @@ Vibe-Research/
 │   ├── newsradar.py     资讯雷达（移植自 investment-news）
 │   ├── market.py        市场情绪 + 板块资金流 + 全球指数
 │   ├── portfolio.py     持仓 + 已清仓（存本地用户目录）
-│   ├── tools.py         AI 工具层（23 个数据工具，chat / MCP / debate 共用）
-│   ├── chat.py          系统 AI（OpenAI 兼容 function-calling）
+│   ├── tools.py         统一只读 AI 工具注册表
+│   ├── ai_workflows.py  工作流提示词、工具白名单与轮次预算
+│   ├── chat.py          受控 AI 运行时（OpenAI 兼容 function-calling / CLI）
 │   ├── debate.py        多空辩论编排（事实底稿 → 多方 / 空方 / 中立主持）
 │   ├── reflection.py    反思审计（对已有分析做推理审计）
 │   └── mcp_server.py    MCP server（给 Claude Code 等 agent）
@@ -271,7 +272,7 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5899
 
 ## 接入 AI
 
-在「接入 AI」页配置一次，全站的「问 AI / 复盘 / 今日要点」就都用你自己的模型。**分析都由你的模型给出，本产品不校准、无倾向。** 三种方式：
+在「接入 AI」页配置一次，全站的「问 AI / 复盘 / 今日要点」就都用你自己的模型。**分析都由你的模型给出，本产品不校准、无倾向。** 每个入口会先选择一个明确工作流（个股、组合、复盘、资讯、自选或板块），工作流决定启动提示词、只读工具白名单与最大调用轮次；模型不能越权调用其他 Vibe 工具。三种接入方式：
 
 ### 1. 订阅接入（调本机已登录的 CLI，免 API key）
 
@@ -286,7 +287,9 @@ cd frontend && npm run dev -- --host 127.0.0.1 --port 5899
 
 ### 2. API 接入（填自己的 key）
 
-「接入 AI 页 → API 接入」选一个模型，**baseURL 自动填好**，只需粘 key。内置 **DeepSeek / 豆包 / MiniMax / OpenAI / OpenRouter / Groq / Together / MiMo / 任意 OpenAI 兼容端点**。这条支持 function-calling——AI 会自己调数据工具（行情/估值/研报/新闻）再作答。key 只存你本地浏览器、随请求发给你自己的后端、不上传、不进仓库。
+「接入 AI 页 → API 接入」选一个模型，**baseURL 自动填好**，只需粘 key。内置 **DeepSeek / 豆包 / MiniMax / OpenAI / OpenRouter / Groq / Together / MiMo / 任意 OpenAI 兼容端点**。这条支持 function-calling——AI 只能从当前工作流允许的行情、估值、研报或事件工具中按需取数。key 只存你本地浏览器、随请求发给你自己的后端、不上传、不进仓库。
+
+> 当前没有通用网页搜索，也没有连接私有知识库。AI 抽屉会明确显示「受控 Vibe 数据工具」或「仅页面上下文」。以后接入 Web Search / Obsidian 时，应先实现独立的只读工具，再只给需要它的工作流加入白名单；不要把新能力默认开放给所有入口。
 
 ### 3. MCP（给 Claude Code / 高手 agent）
 

@@ -35,7 +35,8 @@ python3 -m venv .venv
 | `GET /api/finance?code=600519` | 季报财务快照（mootdx，前端未用 / 备用） | mootdx |
 | **资金面·筹码·信号（v3.3）** | `/api/margin` · `/block-trade` · `/holders` · `/dividend` · `/fund-flow` · `/dragon-tiger` · `/lockup` · `/blocks` · `/hot-concepts` · `/investor-qa` · `/industry` | requests |
 | `GET /api/market/overview` · `/api/radar` | 市场情绪+板块资金 · 资讯雷达 | akshare / stdlib |
-| `POST /api/chat` | 系统 AI 对话（function calling，AI 自己调数据工具） | requests |
+| `GET /api/ai/workflows` | AI 工作流与能力边界目录 | — |
+| `POST /api/chat` | 受控 AI 对话（按工作流限制提示词、工具与轮次） | requests |
 | `POST /api/debate` | **多空辩论**（多 agent，流式 NDJSON）：事实底稿 → 多方 / 空方 →（可选反驳）→ 中立主持 | requests |
 | `GET /api/market-data/crypto/overview` | BTC + 大市值 altcoins、总市值、成交量与主导率 | Coinbase + optional CoinGecko |
 | `GET /api/portfolio/crypto` | Coinbase 与手工钱包的本地加密持仓视图 | Coinbase + local JSON |
@@ -55,11 +56,15 @@ python3 -m venv .venv
 `/api/chat` 请求体：
 ```json
 {
+  "workflow": "stock",
   "messages": [{"role": "user", "content": "茅台估值贵不贵？"}],
   "context": "本页上下文（可空）",
   "llm": {"baseURL": "https://api.deepseek.com", "apiKey": "sk-…", "model": "deepseek-chat"}
 }
 ```
+`workflow` 必填，可选 `general / stock / portfolio / daily_review / intelligence / watchlist / sector`。
+API 模型可调用该工作流白名单内的只读工具；CLI 模型始终是 context-only。流的第一个
+`meta` 事件会报告实际模式、工具数量，以及 Web Search / 私有知识库是否启用。
 `llm` 由前端从本地配置随请求带上，后端不持久化 key。
 
 ## 2. MCP Server（给 Claude Code / 高手 agent）
@@ -71,17 +76,18 @@ claude mcp add vibe-research -- \
   "$(pwd)/.venv/bin/python" "$(pwd)/mcp_server.py"
 ```
 
-挂上后，你的 agent 直接拥有 `query_quote / query_valuation / query_reports / query_news` 四个工具，
-用你自己的订阅额度调数据、多步分析——无需 API key、不占本产品成本。
+挂上后，你的 agent 可以访问 `tools.py` 注册的同一套只读数据工具，
+用你自己的订阅额度调数据、多步分析——无需 API key、不占本产品成本。MCP 是独立的高级入口；
+网页内 AI 仍受 `ai_workflows.py` 的每工作流白名单约束。
 
 ### 完整 A 股数据工具箱（随仓库自带）
 
-MCP 的 4 个工具是「零配置、开箱即用」的常用项。若 agent 需要更全的 A 股数据（龙虎榜 / 融资融券 / 大宗交易 / 股东户数 / 分红 / 资金流 / 解禁 / 概念板块 / 打板情绪 / ETF 期权 / 互动易 / 全市场行业排名 …共 **47 个端点**），本仓库根目录**自带完整数据源** [`a-stock-data/`](../a-stock-data/SKILL.md)（a-stock-data v3.6.0）：
+若 agent 还需要网页工具注册表之外的 A 股端点（打板情绪 / ETF 期权 / 全市场行业排名等），本仓库根目录**自带完整数据源** [`a-stock-data/`](../a-stock-data/SKILL.md)（a-stock-data v3.6.0）：
 
 - 要调哪个接口，直接看 [`a-stock-data/SKILL.md`](../a-stock-data/SKILL.md)——每个端点都有 copy-paste 即用的代码（内嵌全部调用逻辑，零第三方数据封装依赖，东财接口已内置限流防封）。
 - 运行依赖：`pip install mootdx requests pandas stockstats`（自包含，v3.0 起已移除 akshare）。
 - 上游与更新：[github.com/simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data)（不更新也能一直用，自带的是固定可用快照）。
-- 分工：**MCP 4 工具** = 网页 / 轻量常用；**自带数据源 40+ 端点** = agent 深度自助调研的全量工具箱。二者同源，按需取用。
+- 分工：**Vibe 只读工具注册表** = 网页工作流 / MCP 共用；**自带数据源 40+ 端点** = agent 深度自助调研的扩展工具箱。二者按需取用。
 
 ## 合规
 

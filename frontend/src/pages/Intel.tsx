@@ -53,7 +53,7 @@ function InvestmentNewsPanel() {
       `只客观陈述重要事件 / 趋势，不推荐标的、不预测涨跌、不构成建议。直接用「- 」列点，不要多余前后缀。\n\n${ctx}`;
     try {
       let acc = "";
-      await chatStream([{ role: "user", content: prompt }], `${ind.name}赛道资讯`, {
+      await chatStream("intelligence", [{ role: "user", content: prompt }], `${ind.name}赛道资讯`, {
         onDelta: (t) => { acc += t; setDigests((d) => ({ ...d, [ind.key]: { text: acc } })); },
       });
     } catch (e) {

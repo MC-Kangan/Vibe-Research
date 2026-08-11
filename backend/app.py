@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import astock
+import ai_workflows
 import auth as auth_layer
 import chat as chat_layer
 import cli_runtime
@@ -171,10 +173,29 @@ class LLMConfig(BaseModel):
     model: str
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=50_000)
+
+
 class ChatReq(BaseModel):
-    messages: list[dict]
-    context: str = ""
+    messages: list[ChatMessage] = Field(max_length=40)
+    context: str = Field(default="", max_length=150_000)
+    workflow: str = Field(max_length=32)
     llm: LLMConfig
+
+
+@app.get("/api/ai/workflows")
+def ai_workflow_catalog():
+    """Public workflow catalog for capability-aware clients."""
+    return {"data": [{
+        "id": profile.id,
+        "label": profile.label,
+        "purpose": profile.purpose,
+        "tool_count": len(profile.tool_names),
+        "web_search": False,
+        "private_knowledge": False,
+    } for profile in ai_workflows.WORKFLOWS.values()]}
 
 
 @app.post("/api/chat")
@@ -189,6 +210,10 @@ def chat(req: ChatReq):
         raise HTTPException(400, "messages 不能为空")
     if not req.llm.model:
         raise HTTPException(400, "缺少模型配置，请先在「接入 AI」里选择")
+    try:
+        ai_workflows.get_workflow(req.workflow)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     is_cli = req.llm.provider.startswith("cli-")
     if is_cli:
@@ -199,10 +224,13 @@ def chat(req: ChatReq):
         raise HTTPException(400, "缺少 Base URL 或 API Key，请先在「接入 AI」里填写")
 
     cfg = req.llm.model_dump()
+    messages = [message.model_dump() for message in req.messages]
 
     def gen():
         try:
-            events = (chat_layer.run_chat_cli_stream if is_cli else chat_layer.run_chat_stream)(cfg, req.messages, req.context)
+            events = (chat_layer.run_chat_cli_stream if is_cli else chat_layer.run_chat_stream)(
+                cfg, messages, req.context, req.workflow,
+            )
             for ev in events:
                 yield json.dumps(ev, ensure_ascii=False) + "\n"
         except Exception as e:  # noqa: BLE001 — 运行时错误以流内事件上报，不中断连接

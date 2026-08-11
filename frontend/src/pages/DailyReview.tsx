@@ -185,7 +185,7 @@ export function DailyReview() {
       "请用中文做一段跨市场当天复盘：总结美国、欧洲与加密市场，再总结关注股票事件，最后简要补充 A 股。" +
       "只做客观陈述与多视角分析，不预测涨跌、不推荐任何标的、不构成投资建议。";
     try {
-      await chatStream([{ role: "user", content: prompt }], `今日跨市场数据：${benchmarkSummary}`, {
+      await chatStream("daily_review", [{ role: "user", content: prompt }], `今日跨市场数据：${benchmarkSummary}`, {
         onDelta: (t) => setReview((r) => r + t),
       });
     } catch (e) {
@@ -215,6 +215,7 @@ export function DailyReview() {
         subtitle={`${today} · 美国 / 欧洲 / A股 / 加密市场与 AI 复盘一屏看全`}
         actions={
           <AskAiButton
+            workflow="daily_review"
             context={`今日跨市场基准：${benchmarkSummary}\n所选市场情绪：${moodSummary}\n加密市场：${cryptoSummary}\n跨市场概览：\n${marketOverviewSummary}\n关注股票事件：\n${intelligenceSummary}`}
             label="问 AI"
             suggestions={["今天大盘怎么走", "哪些指数领涨领跌", "盘面有什么值得注意"]}

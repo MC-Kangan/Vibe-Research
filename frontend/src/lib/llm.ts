@@ -4,6 +4,7 @@ import { storageSet, storageRemove } from "@/lib/storage";
 
 import { ApiError, authHeaders, notifyAuthInvalidated } from "./api";
 import { isCliProvider, type ProviderId } from "./ai-models";
+import type { AiRuntimeMetadata, AiWorkflowId } from "./ai-workflows";
 
 export interface LlmConfig {
   provider: ProviderId;
@@ -21,6 +22,7 @@ export interface ChatResult {
   content: string;
   trace: { tool: string; args: Record<string, unknown> }[];
   rounds: number;
+  workflow: AiRuntimeMetadata | null;
 }
 
 const KEY = "vr-llm";
@@ -53,12 +55,13 @@ export function hasLlm(): boolean {
 export interface ChatHandlers {
   onDelta?: (text: string) => void;             // 答案逐块吐字
   onTool?: (tool: string, args: Record<string, unknown>) => void; // AI 调了某数据工具
+  onMeta?: (workflow: AiRuntimeMetadata) => void;
 }
 
 // 流式调后端 /api/chat（NDJSON：每行一个事件 {type: tool|delta|done|error}）。
 // 边流边回调 onDelta/onTool；返回累积的最终 {content, trace, rounds}。
 // signal：调用方可传 AbortController.signal，用户关面板/换问题时中止请求（省订阅/API 额度）。
-export async function chatStream(messages: ChatMsg[], context: string, handlers: ChatHandlers = {}, signal?: AbortSignal): Promise<ChatResult> {
+export async function chatStream(workflow: AiWorkflowId, messages: ChatMsg[], context: string, handlers: ChatHandlers = {}, signal?: AbortSignal): Promise<ChatResult> {
   const llm = loadLlm();
   if (!llm) throw new ApiError("尚未接入 AI，请先在「接入 AI」里配置", 400);
 
@@ -67,7 +70,7 @@ export async function chatStream(messages: ChatMsg[], context: string, handlers:
     resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ messages, context, llm }),
+      body: JSON.stringify({ workflow, messages, context, llm }),
       signal,
     });
   } catch (e) {
@@ -92,6 +95,7 @@ export async function chatStream(messages: ChatMsg[], context: string, handlers:
   let content = "";
   let trace: ChatResult["trace"] = [];
   let rounds = 0;
+  let workflowMeta: AiRuntimeMetadata | null = null;
   let errMsg: string | null = null;
 
   for (;;) {
@@ -105,17 +109,18 @@ export async function chatStream(messages: ChatMsg[], context: string, handlers:
       if (!t) continue;
       let ev: any;
       try { ev = JSON.parse(t); } catch { continue; }
-      if (ev.type === "delta") { content += ev.text; handlers.onDelta?.(ev.text); }
+      if (ev.type === "meta") { workflowMeta = ev.workflow; handlers.onMeta?.(ev.workflow); }
+      else if (ev.type === "delta") { content += ev.text; handlers.onDelta?.(ev.text); }
       else if (ev.type === "tool") { handlers.onTool?.(ev.tool, ev.args || {}); }
       else if (ev.type === "done") { trace = ev.trace || []; rounds = ev.rounds || 0; }
       else if (ev.type === "error") { errMsg = ev.message; }
     }
   }
   if (errMsg) throw new ApiError(errMsg, 502);
-  return { content, trace, rounds };
+  return { content, trace, rounds, workflow: workflowMeta };
 }
 
 // 非流式便捷包装（不需要逐字 UI 的调用方用它）。
-export function chat(messages: ChatMsg[], context: string): Promise<ChatResult> {
-  return chatStream(messages, context);
+export function chat(workflow: AiWorkflowId, messages: ChatMsg[], context: string): Promise<ChatResult> {
+  return chatStream(workflow, messages, context);
 }

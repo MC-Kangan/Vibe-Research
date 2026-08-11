@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Sparkles, X, Settings, Send, Loader2, Wrench, AlertCircle, Trash2 } from "lucide-react";
+import { Sparkles, X, Settings, Send, Loader2, Wrench, AlertCircle, Trash2, Database, Globe2 } from "lucide-react";
 import { SafeMarkdown } from "@/components/ui/SafeMarkdown";
 import { cn } from "@/lib/utils";
-import { hasLlm, chatStream, type ChatMsg } from "@/lib/llm";
+import { loadLlm, chatStream, type ChatMsg } from "@/lib/llm";
+import { isCliProvider } from "@/lib/ai-models";
+import { AI_WORKFLOWS, type AiRuntimeMetadata, type AiWorkflowId } from "@/lib/ai-workflows";
 import { ApiError } from "@/lib/api";
 import { SaveNoteButton } from "@/components/ui/SaveNoteButton";
 import { storageGet, storageSet, storageRemove } from "@/lib/storage";
@@ -73,6 +75,7 @@ function saveChat(key: string, msgs: StoredMsg[]): void {
 }
 
 interface Props {
+  workflow: AiWorkflowId;
   // 本分栏/本页要喂给用户 AI 的上下文，作为对话的系统上下文。
   context: string;
   suggestions?: string[];
@@ -103,12 +106,15 @@ interface ToolUse { name: string; arg: string }
 
 // 「问 AI」入口 —— 把当前分栏内容作为上下文，调用户自己配置的模型；
 // AI 可自行调跨市场数据工具作答。结论由用户模型给出，本产品不校准、不负责。
-export function AskAiButton({ context, suggestions = [], label = "问 AI", scopeKey }: Props) {
+export function AskAiButton({ workflow, context, suggestions = [], label = "问 AI", scopeKey }: Props) {
   const { pathname } = useLocation();
   const chatKey = CHAT_KEY_PREFIX + pathname + (scopeKey ? `#${scopeKey}` : "");
 
   const [open, setOpen] = useState(false);
   const [configured, setConfigured] = useState(false);
+  const [providerIsCli, setProviderIsCli] = useState(false);
+  const [runtimeMeta, setRuntimeMeta] = useState<AiRuntimeMetadata | null>(null);
+  const workflowInfo = AI_WORKFLOWS[workflow];
   // key 与消息放在**同一个 state 里原子更新**——这是正确性的关键，不是风格问题。
   // 若分成 msgs + 一个记录归属的 ref，key 变化那一帧 ref 已指向新 key 而 msgs 仍是旧的
   // （setState 下一帧才生效），落盘守卫会误放行，把来源页对话写进目标 key、
@@ -136,8 +142,12 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI", scope
   chatKeyRef.current = chatKey;
 
   useEffect(() => {
-    if (open) setConfigured(hasLlm());
-  }, [open]);
+    if (!open) return;
+    const llm = loadLlm();
+    setRuntimeMeta(null);
+    setConfigured(!!llm);
+    setProviderIsCli(!!llm && isCliProvider(llm.provider));
+  }, [open, workflow]);
 
   // 换页面/换标的 = 换一份对话（key 变了），把目标 key 已存的读进来。
   // 同时**中止在跑的流式请求**：否则它的 alive() 仍然成立，迟到的 chunk 会被
@@ -208,7 +218,8 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI", scope
     // 只有仍是「当前这次请求」才允许写 UI——旧请求的迟到 chunk 直接丢弃
     const alive = () => abortRef.current === ac && !ac.signal.aborted;
     try {
-      await chatStream(history, context, {
+      await chatStream(workflow, history, context, {
+        onMeta: (meta) => { if (alive()) setRuntimeMeta(meta); },
         onTool: (tool, args) => { if (alive()) patchLast((msg) => ({ ...msg, tools: [...(msg.tools || []), { name: tool, arg: argStr(args) }] })); },
         onDelta: (t) => { if (alive()) patchLast((msg) => ({ ...msg, content: msg.content + t })); },
       }, ac.signal);
@@ -262,7 +273,7 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI", scope
           <aside className="glass relative m-3 flex w-full max-w-md flex-col rounded-2xl">
             <div className="flex items-center justify-between border-b border-border/60 p-4">
               <span className="flex items-center gap-2 font-semibold text-glow">
-                <Sparkles className="h-4 w-4 text-primary" /> 问 AI · 本页上下文
+                <Sparkles className="h-4 w-4 text-primary" /> 问 AI · {workflowInfo.label}
               </span>
               <div className="flex items-center gap-1">
                 {msgs.length > 0 && (
@@ -303,9 +314,17 @@ export function AskAiButton({ context, suggestions = [], label = "问 AI", scope
               // 已接入：真对话
               <>
                 <div ref={scrollRef} className="flex-1 space-y-3 overflow-auto p-4 text-sm">
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-[11px] text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="inline-flex items-center gap-1 text-foreground"><Database className="h-3 w-3 text-primary" />{runtimeMeta?.mode === "context_only" || (!runtimeMeta && providerIsCli) ? "仅页面上下文" : "受控 Vibe 数据工具"}</span>
+                      <span className="inline-flex items-center gap-1"><Globe2 className="h-3 w-3" />通用网页搜索未开启</span>
+                      <span>私有知识库未连接</span>
+                    </div>
+                    <p className="mt-1">{workflowInfo.purpose}</p>
+                  </div>
                   {msgs.length === 0 && (
                     <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
-                      AI 可基于本页上下文、并自行调取美股、欧洲或 A 股数据工具作答。结论由你的模型给出，
+                      API 模型只能调用此工作流允许的只读工具；CLI 模型只接收本页上下文。结论由你的模型给出，
                       <b className="text-foreground">不构成投资建议</b>。
                     </div>
                   )}

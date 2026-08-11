@@ -17,64 +17,11 @@ from urllib.parse import urlparse
 
 import requests
 
-import astock
+import ai_workflows
 import cli_runtime
-import gstock
 import tools
 
-# 工具定义与执行统一由 tools.py 提供（chat / mcp_server / debate 共用一套）。
-# 这两个别名是历史入口，mcp_server 与既有测试仍按 chat.TOOLS / chat._exec_tool 取用。
-TOOLS = tools.TOOLS
-_exec_tool = tools.exec_tool
-
-MAX_ROUNDS = 6  # 工具调用最大轮数，防死循环
 _TOOL_RESULT_CAP = 6000  # 单次工具结果注入上限（控 token）
-
-# 投研分析框架：用户要「分析个股 / 给判断 / 下结论」时，AI 一律按这五维组织，
-# 让弱模型也能输出结构化、覆盖全、不漏项的专业解读。焊进 SYSTEM_PROMPT，不做成 UI 选项——
-# 用户就问，给出的就是这套框架的结论。合规：框架只规定「怎么读数据」，每维只陈述事实与相对位置，
-# 最后不给买卖结论。
-ANALYSIS_FRAMEWORK = """【投研分析框架】当用户要你分析个股、给判断或下结论时，按下面五个维度依次组织分析，每维用一两句讲清数据事实与相对位置，最后只做客观归纳、不给买卖结论：
-1. 估值：使用当前市场可用的 PE / PB / PS / 市值等指标；历史分位、同业对比和一致预期缺失时明确标注。
-2. 市场交易面：使用目标市场实际可用的价格趋势、成交量、资金、融资融券、股东或持仓数据；不要把 A 股资金指标套到海外股票。
-3. 财报质量：营收与净利增速、经营现金流、毛利 / 净利率、资产负债率和 per-share 数据；按来源和报告期说明单位。
-4. 行业景气：使用目标市场可用的行业、板块、基准和相对表现；没有统一覆盖时列为数据缺口。
-5. 事件催化与风险：监管文件、earnings、公司新闻、分红、解禁或其他可用企业事件，客观分列「催化」与「风险」两栏。
-
-输出组织（像专业研报那样排版，但只陈述客观事实、不做任何买卖/评级/目标价建议）：
-- 结论先行：开头一句话客观概括当前基本面 / 估值 / 资金面处于什么状态，再附「关键数据速览」。
-- 每个维度用「**加粗小标题** + 一小段展开」，别堆流水账数字。
-- 有对比就上小表格（如估值 vs 同业、财报同比）。
-- 末尾分列「关键观察」与「风险点」两栏。
-（简单的事实性问题——如"现价多少"——直接答，不必套用整个框架。）"""
-
-# 用 f-string 先把框架焊进去，只留 {{context}} 给运行时 .format() 填——4 处调用点无需改。
-SYSTEM_PROMPT = f"""你是 Vibe-Research 里的跨市场投研助理。你可以调用工具获取客观数据来支撑回答。先按用户问题判断市场，再选择对应工具；A 股工具一律传 6 位代码，美股传 ticker，欧洲股票传带交易所后缀的 Yahoo symbol：
-
-- 行情估值：query_quote（批量行情）/ query_valuation（前向 PE、PEG）/ query_valuation_percentile（估值历史分位）/ query_kline（K 线与区间涨跌）
-- 基本面：query_financials（营收净利 ROE 毛利率）/ query_company_info / query_reports（研报）/ query_news
-- 资金筹码：query_fund_flow（主力净流入）/ query_margin（两融）/ query_holders（股东户数）/ query_block_trade / query_dragon_tiger / query_dividend
-- 事件风险：query_announcements（公告）/ query_lockup（解禁）/ query_investor_qa（互动易）
-- 行业板块：query_concepts（板块归属与热门概念）/ query_industry_comparison（行业强弱）/ query_industry_reports
-- 市场层：query_market（scope=indices/global/emotion/turnover/overview）/ query_news_radar（赛道资讯）
-- 海外行情：query_market_snapshot + query_market_bars（美股 AAPL；欧洲 VOD.L / SAP.DE 等）
-- 加密货币：query_crypto_snapshot + query_crypto_bars + query_crypto_context（BTC / ETH / SOL；传统公司基本面不适用）
-- 海外公司研究：query_us_sec_facts + query_us_filings（仅美国）/ query_market_news + query_market_earnings（美国与欧洲 trial）
-- 其他海外补充：query_global_stock（美股关键财务 / 港股 00700 / 韩股 005930.KS）/ query_hk_cashflow（仅港股）
-
-用工具的方式：**先想清楚要回答什么，再挑最相关的 2-5 个工具**，不要一次把所有工具都调一遍。
-估值贵贱看 query_valuation_percentile（目前主要覆盖 A 股），资金动向看 query_fund_flow（目前主要覆盖 A 股），美国风险排查看 query_us_filings，A 股风险排查看 query_announcements + query_lockup。若目标市场没有对应数据，明确说缺失，不要用其他市场数据替代。
-
-硬性规则（务必遵守）：
-- 只做信息整理、数据解读与多视角分析；不推荐任何具体买卖、不预测涨跌与价位、不给买卖时机、不承诺收益、不打分排名。
-- 需要数据时先调工具拿客观数据，再基于数据回答；不要编造数字。
-- 涉及个股时用工具查到的真实数据；讲清多空两面与风险，让用户自己判断。
-- 用简洁中文回答。
-
-{ANALYSIS_FRAMEWORK}
-
-当前页面上下文：
-{{context}}"""
 
 
 # —— 防 SSRF：用户可自带 OpenAI 兼容端点，但后端替其发请求前要挡住指向云元数据/内网的地址 ——
@@ -118,7 +65,7 @@ def _check_base_url(url: str) -> None:
                 raise RuntimeError("Base URL 解析到了不允许的内网地址")
 
 
-def _call_llm(cfg: dict, messages: list, use_tools: bool) -> dict:
+def _call_llm(cfg: dict, messages: list, use_tools: bool, tool_defs: list[dict] | None = None) -> dict:
     _check_base_url(cfg.get("baseURL", ""))
     base = cfg["baseURL"].rstrip("/")
     if not base.endswith(("/v1", "/v3", "/api/v3")):
@@ -126,7 +73,7 @@ def _call_llm(cfg: dict, messages: list, use_tools: bool) -> dict:
         base = base + "/v1"
     payload = {"model": cfg["model"], "messages": messages, "temperature": 0.3}
     if use_tools:
-        payload["tools"] = TOOLS
+        payload["tools"] = tool_defs or []
         payload["tool_choice"] = "auto"
     r = requests.post(
         f"{base}/chat/completions",
@@ -139,19 +86,22 @@ def _call_llm(cfg: dict, messages: list, use_tools: bool) -> dict:
     return r.json()
 
 
-def run_chat(cfg: dict, user_messages: list, context: str = "") -> dict:
+def run_chat(cfg: dict, user_messages: list, context: str, workflow_id: str) -> dict:
     """跑一轮完整对话（含 function calling 循环）。
 
     cfg: {baseURL, apiKey, model}
     user_messages: [{role, content}, ...]
     返回: {content, trace:[{tool,args}], rounds}
     """
-    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=context or "（无）")}]
+    profile = ai_workflows.get_workflow(workflow_id)
+    tool_defs = ai_workflows.tool_definitions(profile)
+    allowed_tools = set(profile.tool_names)
+    messages = [{"role": "system", "content": profile.system_prompt(context)}]
     messages.extend(user_messages)
     trace: list[dict] = []
 
-    for rnd in range(1, MAX_ROUNDS + 1):
-        data = _call_llm(cfg, messages, use_tools=True)
+    for rnd in range(1, profile.max_rounds + 1):
+        data = _call_llm(cfg, messages, use_tools=bool(tool_defs), tool_defs=tool_defs)
         choice = data["choices"][0]["message"]
         messages.append(choice)
         tool_calls = choice.get("tool_calls") or []
@@ -165,8 +115,11 @@ def run_chat(cfg: dict, user_messages: list, context: str = "") -> dict:
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            result = _exec_tool(name, args)
-            trace.append({"tool": name, "args": args})
+            if name in allowed_tools:
+                result = tools.exec_tool(name, args)
+                trace.append({"tool": name, "args": args})
+            else:
+                result = {"error": f"工具 {name} 未获当前工作流授权"}
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id", ""),
@@ -175,10 +128,10 @@ def run_chat(cfg: dict, user_messages: list, context: str = "") -> dict:
 
     # 超过最大轮数，最后再要一次不带工具的收尾回答
     data = _call_llm(cfg, messages, use_tools=False)
-    return {"content": data["choices"][0]["message"].get("content") or "", "trace": trace, "rounds": MAX_ROUNDS}
+    return {"content": data["choices"][0]["message"].get("content") or "", "trace": trace, "rounds": profile.max_rounds}
 
 
-def run_chat_cli(cfg: dict, user_messages: list, context: str = "") -> dict:
+def run_chat_cli(cfg: dict, user_messages: list, context: str, workflow_id: str) -> dict:
     """订阅接入：用本机已登录的 CLI 一次性作答（无 function-calling）。
 
     CLI 不能像 API 那条自己调数据工具，所以数据必须已在 context 里（每日复盘 / 今日要点 /
@@ -186,7 +139,8 @@ def run_chat_cli(cfg: dict, user_messages: list, context: str = "") -> dict:
     """
     provider = str(cfg.get("provider", ""))
     kind = provider[4:] if provider.startswith("cli-") else provider
-    system = SYSTEM_PROMPT.format(context=context or "（无）")
+    profile = ai_workflows.get_workflow(workflow_id)
+    system = profile.system_prompt(context, tools_available=False)
     user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "（无问题）"
     content = cli_runtime.run_cli(kind, system, user)
     return {"content": content, "trace": [], "rounds": 1}
@@ -203,11 +157,11 @@ def _resolve_base(cfg: dict) -> str:
     return base
 
 
-def _call_llm_stream(cfg: dict, messages: list, use_tools: bool):
+def _call_llm_stream(cfg: dict, messages: list, use_tools: bool, tool_defs: list[dict] | None = None):
     _check_base_url(cfg.get("baseURL", ""))
     payload = {"model": cfg["model"], "messages": messages, "temperature": 0.3, "stream": True}
     if use_tools:
-        payload["tools"] = TOOLS
+        payload["tools"] = tool_defs or []
         payload["tool_choice"] = "auto"
     r = requests.post(
         f"{_resolve_base(cfg)}/chat/completions",
@@ -247,14 +201,18 @@ def _iter_sse_deltas(resp):
                 yield choices[0].get("delta") or {}
 
 
-def run_chat_stream(cfg: dict, user_messages: list, context: str = ""):
+def run_chat_stream(cfg: dict, user_messages: list, context: str, workflow_id: str):
     """API 接入流式：function-calling 循环，边流答案边推工具调用事件。"""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(context=context or "（无）")}]
+    profile = ai_workflows.get_workflow(workflow_id)
+    tool_defs = ai_workflows.tool_definitions(profile)
+    allowed_tools = set(profile.tool_names)
+    yield {"type": "meta", "workflow": profile.public_metadata(str(cfg.get("provider", "")))}
+    messages = [{"role": "system", "content": profile.system_prompt(context)}]
     messages.extend(user_messages)
     trace: list[dict] = []
 
-    for rnd in range(1, MAX_ROUNDS + 1):
-        resp = _call_llm_stream(cfg, messages, use_tools=True)
+    for rnd in range(1, profile.max_rounds + 1):
+        resp = _call_llm_stream(cfg, messages, use_tools=bool(tool_defs), tool_defs=tool_defs)
         content_parts: list[str] = []
         tool_acc: dict[int, dict] = {}
         for delta in _iter_sse_deltas(resp):
@@ -298,9 +256,12 @@ def run_chat_stream(cfg: dict, user_messages: list, context: str = ""):
                 args = json.loads(a["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
-            yield {"type": "tool", "tool": a["name"], "args": args}
-            result = _exec_tool(a["name"], args)
-            trace.append({"tool": a["name"], "args": args})
+            if a["name"] in allowed_tools:
+                yield {"type": "tool", "tool": a["name"], "args": args}
+                result = tools.exec_tool(a["name"], args)
+                trace.append({"tool": a["name"], "args": args})
+            else:
+                result = {"error": f"工具 {a['name']} 未获当前工作流授权"}
             messages.append({
                 "role": "tool", "tool_call_id": a["id"],
                 "content": json.dumps(result, ensure_ascii=False)[:_TOOL_RESULT_CAP],
@@ -309,14 +270,16 @@ def run_chat_stream(cfg: dict, user_messages: list, context: str = ""):
     # 超过最大轮数：不带工具收尾（非流式一次拿完再吐）
     data = _call_llm(cfg, messages, use_tools=False)
     yield {"type": "delta", "text": data["choices"][0]["message"].get("content") or ""}
-    yield {"type": "done", "trace": trace, "rounds": MAX_ROUNDS}
+    yield {"type": "done", "trace": trace, "rounds": profile.max_rounds}
 
 
-def run_chat_cli_stream(cfg: dict, user_messages: list, context: str = ""):
+def run_chat_cli_stream(cfg: dict, user_messages: list, context: str, workflow_id: str):
     """订阅接入流式：CLI stdout 边出边推 delta。"""
     provider = str(cfg.get("provider", ""))
     kind = provider[4:] if provider.startswith("cli-") else provider
-    system = SYSTEM_PROMPT.format(context=context or "（无）")
+    profile = ai_workflows.get_workflow(workflow_id)
+    yield {"type": "meta", "workflow": profile.public_metadata(provider)}
+    system = profile.system_prompt(context, tools_available=False)
     user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "（无问题）"
     for chunk in cli_runtime.run_cli_stream(kind, system, user):
         yield {"type": "delta", "text": chunk}

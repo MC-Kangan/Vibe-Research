@@ -138,7 +138,7 @@ export function RealPositionPanel({ preferences }: { preferences: string[] }) {
     <div className="mb-4 flex flex-wrap items-start gap-3">
       <div><h2 className="flex items-center gap-2 text-lg font-bold"><ShieldCheck className="h-5 w-5 text-primary" />真实持仓（IBKR Flex）</h2><p className="mt-1 text-xs text-muted-foreground">Vibe Research 本地快照；刷新是只读 IBKR 查询，不提交订单。</p></div>
       <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
-        {data?.status === "available" && <AskAiButton context={aiContext} label="让 AI 看真实持仓" suggestions={["我的持仓集中在哪些方向", "结构上有什么风险", "帮我梳理一下"]} />}
+        {data?.status === "available" && <AskAiButton workflow="portfolio" context={aiContext} label="让 AI 看真实持仓" suggestions={["我的持仓集中在哪些方向", "结构上有什么风险", "帮我梳理一下"]} />}
         <button onClick={refreshAll} disabled={loading || activeJob} title="更新当前持仓、历史 P&L 与交易点位" className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/25 disabled:opacity-50">{activeJob ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{activeJob ? "同步中" : "同步 IBKR"}</button>
         <button onClick={refresh} disabled={loading || activeJob} title="仅更新当前持仓快照，不查询历史 P&L" className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">{loading && !activeJob ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}仅更新持仓</button>
       </div>

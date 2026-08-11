@@ -24,7 +24,7 @@ import cli_runtime
 import market_data
 import tools
 
-# 底稿抓取清单：覆盖「估值 / 财报 / 资金 / 事件 / 行业」五个面，与 chat.ANALYSIS_FRAMEWORK 对齐。
+# 底稿抓取清单：覆盖「估值 / 财报 / 资金 / 事件 / 行业」五个面，与个股工作流框架对齐。
 # 每项 (工具名, 额外参数, 小标题, 可并行)。任何一项挂了都不阻断，缺项会如实标注。
 #
 # ⚠️ 「可并行」不是随便标的：astock.em_get 的防封节流靠的是「上次请求时间戳 + sleep」而不是锁，

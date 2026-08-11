@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app as app_module
+import ai_workflows
 import chat
 import debate
 import reflection
@@ -39,10 +40,24 @@ def test_tool_schema_shape():
             assert req in params["properties"], f"{fn['name']} 的必填参数 {req} 未在 properties 中定义"
 
 
-def test_chat_reexports_tools():
-    """mcp_server 与既有测试按 chat.TOOLS / chat._exec_tool 取用，别名不能断。"""
-    assert chat.TOOLS is tools.TOOLS
-    assert chat._exec_tool is tools.exec_tool
+def test_workflow_tool_scopes_are_valid_and_distinct():
+    ai_workflows.validate_registry()
+    assert set(ai_workflows.WORKFLOWS["portfolio"].tool_names) < set(tools.TOOL_NAMES)
+    assert "query_us_filings" in ai_workflows.WORKFLOWS["stock"].tool_names
+    assert "query_fund_flow" not in ai_workflows.WORKFLOWS["portfolio"].tool_names
+
+
+def test_cli_workflow_metadata_is_context_only():
+    profile = ai_workflows.get_workflow("portfolio")
+    api_meta = profile.public_metadata("openai")
+    cli_meta = profile.public_metadata("cli-codex")
+    assert api_meta["mode"] == "controlled_tools" and api_meta["tools_enabled"] is True
+    assert cli_meta["mode"] == "context_only" and cli_meta["tools_enabled"] is False
+    assert cli_meta["web_search"] is False and cli_meta["private_knowledge"] is False
+    prompt = profile.system_prompt("context", tools_available=False)
+    assert "选择最相关" not in prompt
+    assert "仅基于页面上下文" in prompt
+    assert "untrusted research data" in prompt
 
 
 def test_pick_trims_and_tolerates():

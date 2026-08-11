@@ -11,6 +11,7 @@ import chat
 import cli_runtime
 import market
 import portfolio as pf
+import tools
 
 client = TestClient(app_module.app)
 
@@ -220,7 +221,7 @@ def test_stream_tool_calls_without_index(monkeypatch):
         [{"content": "答案"}],  # 第二轮：纯文本收尾
     ]
     state = {"round": 0}
-    monkeypatch.setattr(chat, "_call_llm_stream", lambda cfg, messages, use_tools: None)
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda cfg, messages, use_tools, tool_defs=None: None)
 
     def fake_iter(_resp):
         i = state["round"]
@@ -229,14 +230,38 @@ def test_stream_tool_calls_without_index(monkeypatch):
 
     monkeypatch.setattr(chat, "_iter_sse_deltas", fake_iter)
     executed = []
-    monkeypatch.setattr(chat, "_exec_tool", lambda name, args: (executed.append((name, args)), {"ok": 1})[1])
+    monkeypatch.setattr(tools, "exec_tool", lambda name, args: (executed.append((name, args)), {"ok": 1})[1])
 
     events = list(chat.run_chat_stream(
         {"baseURL": "http://x", "apiKey": "k", "model": "m"},
         [{"role": "user", "content": "q"}],
+        "",
+        "general",
     ))
     assert ("query_quote", {"codes": ["600519"]}) in executed  # 参数没被串坏
     assert ("query_news", {"code": "600519"}) in executed      # 两个调用各归各槽
+    assert events[-1]["type"] == "done"
+
+
+def test_workflow_rejects_unapproved_tool_even_if_model_requests_it(monkeypatch):
+    rounds = iter([
+        [{"tool_calls": [{"index": 0, "id": "bad", "function": {"name": "query_fund_flow", "arguments": '{"code":"600519"}'}}]}],
+        [{"content": "已说明无法调用"}],
+    ])
+    monkeypatch.setattr(chat, "_call_llm_stream", lambda cfg, messages, use_tools, tool_defs=None: None)
+    monkeypatch.setattr(chat, "_iter_sse_deltas", lambda _resp: iter(next(rounds)))
+    executed = []
+    monkeypatch.setattr(tools, "exec_tool", lambda name, args: executed.append(name))
+
+    events = list(chat.run_chat_stream(
+        {"provider": "openai", "baseURL": "http://x", "apiKey": "k", "model": "m"},
+        [{"role": "user", "content": "q"}], "", "portfolio",
+    ))
+
+    assert executed == []
+    assert events[0]["type"] == "meta" and events[0]["workflow"]["id"] == "portfolio"
+    assert not any(event["type"] == "tool" for event in events)
+    assert events[-1]["trace"] == []
     assert events[-1]["type"] == "done"
 
 
