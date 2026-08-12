@@ -5,6 +5,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { portfolioNumber } from "@/lib/portfolio-format";
 import { storageGet, storageSet } from "@/lib/storage";
 import { useLocale } from "@/lib/i18n";
+import { PortfolioResearchPanel } from "@/components/portfolio/PortfolioResearchPanel";
 
 export function PortfolioOverview() {
   const { locale, tr } = useLocale();
@@ -26,5 +27,6 @@ export function PortfolioOverview() {
       <GlassCard className="mb-4"><div className="flex h-4 overflow-hidden rounded-full bg-muted/40"><div className="bg-sky-500" style={{ width: `${data.weights.stock * 100}%` }} /><div className="bg-primary" style={{ width: `${data.weights.crypto * 100}%` }} /><div className="bg-emerald-500" style={{ width: `${data.weights.cash * 100}%` }} /></div><div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground"><span>{tr("Equities", "股票")} {(data.weights.stock * 100).toFixed(1)}%</span><span>{tr("Crypto", "加密")} {(data.weights.crypto * 100).toFixed(1)}%</span><span>{tr("Cash", "现金")} {(data.weights.cash * 100).toFixed(1)}%</span><span>{tr("Including cash-like crypto", "其中类现金加密资产")} {portfolioNumber(data.cash_like_crypto)} {data.reporting_currency}</span></div></GlassCard>
       {data.gaps.length > 0 && <p className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-warning">{tr("Excluded items or data gaps", "未计入或数据缺口")}：{data.gaps.join(locale === "en" ? "; " : "；")}</p>}
     </>}
+    <PortfolioResearchPanel />
   </>;
 }

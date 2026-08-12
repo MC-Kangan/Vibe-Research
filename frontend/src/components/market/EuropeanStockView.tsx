@@ -161,20 +161,22 @@ export function MarketStockView({ snapshot, history, news, earnings, filings, se
         <GlassCard className="mb-4">
           <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
             <Newspaper className="h-4 w-4 text-primary" /> {tr("Company news", "公司新闻")}
+            <span className="ml-auto text-[10px] font-normal text-muted-foreground">{news.source}{news.is_stale ? ` · ${tr("stale cache", "缓存数据")}` : ""}</span>
           </h3>
           <div className="divide-y divide-border/40">
             {news.items.slice(0, 10).map((item, index) => (
               <div key={`${item.url}-${index}`} className="py-2 text-xs">
                 {item.url ? <a href={item.url} target="_blank" rel="noreferrer" className="font-medium hover:text-primary">{item.headline || "Untitled"}</a> : <span className="font-medium">{item.headline || "Untitled"}</span>}
-                <p className="mt-0.5 text-[10px] text-muted-foreground">{item.source || "Finnhub"}{item.published_at ? ` · ${new Date(item.published_at * 1000).toLocaleString(locale)}` : ""}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{item.source || news.source}{item.published_at ? ` · ${new Date(typeof item.published_at === "number" ? item.published_at * 1000 : item.published_at).toLocaleString(locale)}` : ""}</p>
               </div>
             ))}
           </div>
+          {(news.gaps?.length || 0) > 0 && <p className="mt-2 text-[10px] text-muted-foreground">{tr("Provider gaps", "数据源缺口")}: {news.gaps?.map((gap) => `${gap.provider}: ${gap.detail}`).join("; ")}</p>}
         </GlassCard>
       )}
 
       <p className="text-xs text-muted-foreground/60">
-        {crypto ? tr("Prices come from the Coinbase USD spot market with UTC daily boundaries; traditional company fundamentals, filings, and earnings do not apply.", "行情来自 Coinbase USD 现货市场，日线以 UTC 为边界；传统公司基本面、监管文件与 earnings 不适用。") : tr("Prices come from Yahoo Chart. SEC data applies only to US filers. News and earnings use the Finnhub trial tier; European coverage is still being validated.", "行情来自 Yahoo chart；SEC 数据仅适用于美国申报公司；新闻与 earnings 使用 Finnhub trial，欧洲覆盖仍在验证。")}
+        {crypto ? tr("Prices come from the Coinbase USD spot market with UTC daily boundaries; traditional company fundamentals, filings, and earnings do not apply.", "行情来自 Coinbase USD 现货市场，日线以 UTC 为边界；传统公司基本面、监管文件与 earnings 不适用。") : tr("Prices come from Yahoo Chart. SEC data applies only to US filers. Company news uses Finnhub when configured and an explicitly labelled Yahoo Search fallback; earnings remain Finnhub-only.", "行情来自 Yahoo chart；SEC 数据仅适用于美国申报公司；公司新闻在配置后优先使用 Finnhub，否则使用明确标注的 Yahoo Search 备用源；earnings 仍仅使用 Finnhub。")}
         {sourceGaps.length > 0 && <> {tr("Gaps in this request", "本次缺口")}：{sourceGaps.join(locale === "en" ? "; " : "；")}。</>}
       </p>
     </>

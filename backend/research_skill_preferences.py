@@ -33,7 +33,7 @@ def _valid(asset_type: str, values: Any) -> list[str]:
         return []
     allowed = {
         name for name, asset_types in research.DEFAULT_SKILL_ASSET_TYPES.items()
-        if asset_type in asset_types
+        if asset_type in asset_types and name in research.INSTRUMENT_SKILLS
     }
     return list(dict.fromkeys(value for value in values if isinstance(value, str) and value in allowed))[:5]
 
@@ -65,7 +65,7 @@ def save(asset_type: str, skills: list[str]) -> dict[str, Any]:
     normalized = list(dict.fromkeys(skills))
     allowed = {
         name for name, asset_types in research.DEFAULT_SKILL_ASSET_TYPES.items()
-        if asset_type in asset_types
+        if asset_type in asset_types and name in research.INSTRUMENT_SKILLS
     }
     invalid = [name for name in normalized if name not in allowed]
     if invalid:

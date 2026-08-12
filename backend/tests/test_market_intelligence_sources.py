@@ -46,8 +46,9 @@ def test_finnhub_news_normalizes_and_sends_token():
         "datetime": 1785772800, "url": "https://example.test/news", "category": "company",
     }])])
     result = FinnhubProvider(http=http, api_key="trial-key").company_news("aapl", limit=1)
-    assert result["symbol"] == "AAPL"
-    assert result["items"][0]["headline"] == "Apple update"
+    assert result.symbol == "AAPL"
+    assert result.items[0].headline == "Apple update"
+    assert result.items[0].published_at == "2026-08-03T16:00:00Z"
     assert http.calls[0][1]["params"]["token"] == "trial-key"
 
 

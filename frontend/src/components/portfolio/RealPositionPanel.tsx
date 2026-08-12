@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import * as echarts from "echarts";
 import { AlertCircle, BarChart3, Loader2, RefreshCw, ShieldCheck, Users } from "lucide-react";
 import { AskAiButton } from "@/components/ui/AskAiButton";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { ApiError, api, type IbkrAnalytics, type IbkrInstrument, type IbkrPositionChart, type IbkrRefreshStatus, type RealPositionSnapshot } from "@/lib/api";
+import { init as initEChart } from "@/lib/echarts";
 import { investmentProfileContext, portfolioAiInstruction, portfolioAiNumber, portfolioNumber, portfolioRatioPercent, portfolioSigned } from "@/lib/portfolio-format";
 import { useLocale, type Locale } from "@/lib/i18n";
 
@@ -195,7 +195,7 @@ function IbkrAnalyticsView({
   const chartHost = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!chartHost.current || !chart?.bars.length) return;
-    const instance = echarts.init(chartHost.current);
+    const instance = initEChart(chartHost.current);
     const bars = chart.bars.filter((bar) => bar.open != null && bar.close != null && bar.low != null && bar.high != null);
     const dates = bars.map((bar) => bar.date);
     const closes = bars.map((bar) => bar.close as number);

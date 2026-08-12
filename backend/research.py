@@ -10,11 +10,25 @@ from typing import Any
 import requests
 
 import astock
+import instrument_overview
 import market_data
 import tools as data_tools
 from market_data.yahoo import YahooProvider
 
 ALLOWED_SKILLS = {
+    "fundamental",
+    "filings",
+    "worth-buy-stocks",
+    "markov-method",
+    "technical-basic",
+    "risk-analysis",
+    "volatility-regime",
+    "correlation-analysis",
+    "asset-allocation",
+}
+PORTFOLIO_SKILLS = {"correlation-analysis", "asset-allocation"}
+INSTRUMENT_SKILLS = ALLOWED_SKILLS - PORTFOLIO_SKILLS
+PRICE_SERIES_SKILLS = {
     "worth-buy-stocks",
     "markov-method",
     "technical-basic",
@@ -22,11 +36,15 @@ ALLOWED_SKILLS = {
     "volatility-regime",
 }
 DEFAULT_SKILL_ASSET_TYPES = {
+    "fundamental": ("equity",),
+    "filings": ("equity",),
     "worth-buy-stocks": ("equity",),
     "markov-method": ("equity", "crypto"),
     "technical-basic": ("equity", "crypto"),
     "risk-analysis": ("equity", "crypto"),
     "volatility-regime": ("equity", "crypto"),
+    "correlation-analysis": ("equity", "crypto"),
+    "asset-allocation": ("equity", "crypto"),
 }
 _A_SHARE_BENCHMARKS = {"CSI300": ("000300", "SSE"), "CSI500": ("000905", "SSE")}
 _EU_INDEXES = {"SXXP": ("^STOXX", "INDEX"), "SX5E": ("^STOXX50E", "INDEX")}
@@ -54,12 +72,19 @@ def _base_url() -> str:
 
 
 def _headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {os.environ.get('VR_TRADE_RESEARCH_API_TOKEN', '').strip()}"}
+    return {
+        "Authorization": f"Bearer {os.environ.get('VR_TRADE_RESEARCH_API_TOKEN', '').strip()}"
+    }
 
 
 def _timeout() -> float:
     try:
-        return max(3.0, min(float(os.environ.get("VR_TRADE_RESEARCH_TIMEOUT_SECONDS", "30")), 120.0))
+        return max(
+            3.0,
+            min(
+                float(os.environ.get("VR_TRADE_RESEARCH_TIMEOUT_SECONDS", "30")), 120.0
+            ),
+        )
     except ValueError:
         return 30.0
 
@@ -68,7 +93,9 @@ def list_skills() -> list[dict[str, Any]]:
     if not configured():
         raise ResearchClientError("TradeAgent is not configured")
     try:
-        response = requests.get(f"{_base_url()}/skills", headers=_headers(), timeout=_timeout())
+        response = requests.get(
+            f"{_base_url()}/skills", headers=_headers(), timeout=_timeout()
+        )
     except requests.RequestException as exc:
         raise ResearchClientError("TradeAgent is unreachable") from exc
     if response.status_code in {401, 403}:
@@ -92,7 +119,9 @@ def list_skills() -> list[dict[str, Any]]:
     return result
 
 
-def validate_skill_support(skills: list[str], asset_type: str, catalog: list[dict[str, Any]] | None = None) -> None:
+def validate_skill_support(
+    skills: list[str], asset_type: str, catalog: list[dict[str, Any]] | None = None
+) -> None:
     if asset_type not in {"equity", "crypto"}:
         raise UnsupportedSkillAssetError("asset_type must be equity or crypto")
     available = catalog if catalog is not None else list_skills()
@@ -101,9 +130,25 @@ def validate_skill_support(skills: list[str], asset_type: str, catalog: list[dic
         for item in available
         if isinstance(item, dict)
     }
-    unsupported = [skill for skill in skills if asset_type not in support_by_name.get(skill, [])]
+    unsupported = [
+        skill for skill in skills if asset_type not in support_by_name.get(skill, [])
+    ]
     if unsupported:
-        raise UnsupportedSkillAssetError(f"Skills do not support {asset_type}: {', '.join(unsupported)}")
+        raise UnsupportedSkillAssetError(
+            f"Skills do not support {asset_type}: {', '.join(unsupported)}"
+        )
+    unavailable = {
+        str(item.get("name")): item.get("missing_capabilities", [])
+        for item in available
+        if isinstance(item, dict) and item.get("available") is False
+    }
+    selected_unavailable = [skill for skill in skills if skill in unavailable]
+    if selected_unavailable:
+        details = ", ".join(
+            f"{skill} ({'/'.join(map(str, unavailable[skill])) or 'provider'})"
+            for skill in selected_unavailable
+        )
+        raise ResearchClientError(f"Skill providers are not configured: {details}")
 
 
 def run_analysis(
@@ -113,6 +158,8 @@ def run_analysis(
     market: str,
     skill_parameters: dict[str, dict[str, Any]],
     price_series: list[dict[str, Any]],
+    scope: str = "instrument",
+    portfolio_instruments: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if not skills or any(skill not in ALLOWED_SKILLS for skill in skills):
         raise ResearchClientError("Selected skills are not enabled")
@@ -121,6 +168,8 @@ def run_analysis(
         "analysts": skills,
         "skill_parameters": skill_parameters,
         "price_series": price_series,
+        "scope": scope,
+        "portfolio_instruments": portfolio_instruments or [],
     }
     try:
         response = requests.post(
@@ -140,14 +189,18 @@ def run_analysis(
             detail = response.json().get("detail")
         except (TypeError, ValueError):
             detail = None
-        raise ResearchClientError(str(detail or f"TradeAgent returned status {response.status_code}"))
+        raise ResearchClientError(
+            str(detail or f"TradeAgent returned status {response.status_code}")
+        )
     payload = response.json()
     if not isinstance(payload, dict):
         raise ResearchClientError("TradeAgent returned an invalid report payload")
     return payload
 
 
-def _split_full_report(report: dict[str, Any], selected: list[str]) -> list[dict[str, Any]]:
+def _split_full_report(
+    report: dict[str, Any], selected: list[str]
+) -> list[dict[str, Any]]:
     """Preserve the UI's one-report-per-skill shape from one batch report."""
     report_results = report.get("results")
     if not isinstance(report_results, list):
@@ -159,15 +212,19 @@ def _split_full_report(report: dict[str, Any], selected: list[str]) -> list[dict
     }
     shared = {key: value for key, value in report.items() if key != "results"}
     return [
-        ({
-            "skill": skill,
-            "status": "complete",
-            "report": {**shared, "results": [by_skill[skill]]},
-        } if skill in by_skill else {
-            "skill": skill,
-            "status": "failed",
-            "detail": "TradeAgent did not return a result for the selected skill",
-        })
+        (
+            {
+                "skill": skill,
+                "status": "complete",
+                "report": {**shared, "results": [by_skill[skill]]},
+            }
+            if skill in by_skill
+            else {
+                "skill": skill,
+                "status": "failed",
+                "detail": "TradeAgent did not return a result for the selected skill",
+            }
+        )
         for skill in selected
     ]
 
@@ -185,7 +242,9 @@ def run_skills_full(
         return {"symbol": symbol, "market": "", "results": []}
     unknown = [skill for skill in selected if skill not in ALLOWED_SKILLS]
     if unknown:
-        raise ResearchClientError(f"Selected skills are not enabled: {', '.join(unknown)}")
+        raise ResearchClientError(
+            f"Selected skills are not enabled: {', '.join(unknown)}"
+        )
     if not configured():
         raise ResearchClientError("TradeAgent is not configured")
 
@@ -204,6 +263,70 @@ def run_skills_full(
         "market": inputs["market"],
         "asset_type": asset_type,
         "results": _split_full_report(report, selected),
+    }
+
+
+def run_portfolio_analysis(
+    *,
+    instruments: list[dict[str, str]],
+    method: str = "risk_parity",
+    lookback: int = 120,
+) -> dict[str, Any]:
+    """Run fixed multi-asset skills against one bounded inline-series batch."""
+    if not configured():
+        raise ResearchClientError("TradeAgent is not configured")
+    if not 2 <= len(instruments) <= 9:
+        raise ResearchClientError("Select between 2 and 9 instruments")
+    resolved: list[tuple[str, str, str]] = []
+    for item in instruments:
+        symbol, market = _resolve_target(
+            item.get("symbol", ""), item.get("asset_type", "")
+        )
+        resolved.append((symbol, market, item["asset_type"]))
+    identities = [(symbol, market) for symbol, market, _ in resolved]
+    if len(set(identities)) != len(identities):
+        raise ResearchClientError("Portfolio instruments must be unique")
+
+    series: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(resolved)) as executor:
+        futures = {
+            executor.submit(_load_series, symbol, market): (symbol, market)
+            for symbol, market, _ in resolved
+        }
+        for future in as_completed(futures):
+            symbol, _market = futures[future]
+            try:
+                series.append(future.result())
+            except Exception as exc:  # noqa: BLE001
+                raise ResearchClientError(
+                    f"Price history is unavailable for {symbol}"
+                ) from exc
+
+    report = run_analysis(
+        skills=["correlation-analysis", "asset-allocation"],
+        symbol="BASKET",
+        market="PORTFOLIO",
+        skill_parameters={
+            "correlation-analysis": {
+                "lookback": lookback,
+            },
+            "asset-allocation": {
+                "method": method,
+                "lookback": lookback,
+            },
+        },
+        price_series=series,
+        scope="portfolio",
+        portfolio_instruments=[
+            {"symbol": symbol, "market": market} for symbol, market in identities
+        ],
+    )
+    return {
+        **report,
+        "instruments": [
+            {"symbol": symbol, "market": market, "asset_type": asset_type}
+            for symbol, market, asset_type in resolved
+        ],
     }
 
 
@@ -238,7 +361,14 @@ def _compact_analyst_result_for_ai(result: dict[str, Any]) -> dict[str, Any]:
         if isinstance(provenance, dict):
             compact_provenance = {
                 key: provenance.get(key)
-                for key in ("algorithm", "window", "point_count", "start_at", "end_at", "input_provider_kind")
+                for key in (
+                    "algorithm",
+                    "window",
+                    "point_count",
+                    "start_at",
+                    "end_at",
+                    "input_provider_kind",
+                )
                 if provenance.get(key) is not None
             }
             if compact_provenance:
@@ -308,9 +438,12 @@ def run_skills_shared(
     return {
         **full,
         "results": [
-            ({**item, "report": compact_report_for_ai(item["report"])}
-             if item.get("status") == "complete" and isinstance(item.get("report"), dict)
-             else item)
+            (
+                {**item, "report": compact_report_for_ai(item["report"])}
+                if item.get("status") == "complete"
+                and isinstance(item.get("report"), dict)
+                else item
+            )
             for item in full["results"]
         ],
     }
@@ -332,30 +465,37 @@ def run_skill_for_ai(
     )
 
 
-def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[str, Any]], asset_type: str = "equity") -> dict[str, Any]:
+def build_run_inputs(
+    symbol: str,
+    skills: list[str],
+    parameters: dict[str, dict[str, Any]],
+    asset_type: str = "equity",
+) -> dict[str, Any]:
     """Resolve one target and all default skill benchmarks into one shared payload."""
-    canonical = (symbol or "").strip().upper()
-    if asset_type == "crypto":
-        target_symbol = market_data.resolve_crypto_symbol(canonical)
-        market = "CRYPTO"
-    elif asset_type != "equity":
-        raise ResearchClientError("asset_type must be equity or crypto")
-    elif canonical.isdigit() and len(canonical) == 6:
-        market = _a_share_market(canonical)
-        target_symbol = canonical
-    else:
-        resolved = market_data.resolve_symbol(canonical)
-        target_symbol = resolved.provider_symbol
-        market = "EU" if resolved.exchange.country != "US" else "US"
+    target_symbol, market = _resolve_target(symbol, asset_type)
+
+    if not PRICE_SERIES_SKILLS.intersection(skills):
+        return {
+            "symbol": target_symbol,
+            "market": market,
+            "asset_type": asset_type,
+            "price_series": [],
+        }
 
     required = {"target": (target_symbol, market)}
     if "worth-buy-stocks" in skills:
-        requested = str(parameters.get("worth-buy-stocks", {}).get("benchmark_symbols", "AUTO"))
+        requested = str(
+            parameters.get("worth-buy-stocks", {}).get("benchmark_symbols", "AUTO")
+        )
         labels = [item.strip().upper() for item in requested.split(",") if item.strip()]
         if not labels or labels == ["AUTO"]:
-            labels = ["BTC-USD", "ETH-USD"] if market == "CRYPTO" else (
-                ["CSI300", "CSI500"] if market in {"SSE", "SZSE", "BJSE"} else (
-                    ["SXXP", "SX5E"] if market == "EU" else ["SPY", "QQQ"]
+            labels = (
+                ["BTC-USD", "ETH-USD"]
+                if market == "CRYPTO"
+                else (
+                    ["CSI300", "CSI500"]
+                    if market in {"SSE", "SZSE", "BJSE"}
+                    else (["SXXP", "SX5E"] if market == "EU" else ["SPY", "QQQ"])
                 )
             )
         for label in labels[:8]:
@@ -374,7 +514,9 @@ def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[
                 result_key, payload = future.result()
             except Exception as exc:  # noqa: BLE001 — benchmark gaps are reported by the skill
                 if key == "target":
-                    raise ResearchClientError("Target price history is unavailable") from exc
+                    raise ResearchClientError(
+                        "Target price history is unavailable"
+                    ) from exc
                 continue
             series[result_key] = payload
 
@@ -387,6 +529,13 @@ def build_run_inputs(symbol: str, skills: list[str], parameters: dict[str, dict[
         "asset_type": asset_type,
         "price_series": list(series.values()),
     }
+
+
+def _resolve_target(symbol: str, asset_type: str) -> tuple[str, str]:
+    try:
+        return instrument_overview.resolve_research_identity(symbol, asset_type)
+    except market_data.MarketDataError as exc:
+        raise ResearchClientError(str(exc)) from exc
 
 
 def _benchmark_identity(label: str, target_market: str) -> tuple[str, str]:
@@ -410,35 +559,53 @@ def _load_series(symbol: str, market: str) -> dict[str, Any]:
         rows = _yahoo_index_history(symbol)
         source = "yahoo"
     else:
-        data = market_data.get_bars(symbol, "2y", "1d", "crypto" if market == "CRYPTO" else "equity")
+        data = market_data.get_bars(
+            symbol, "2y", "1d", "crypto" if market == "CRYPTO" else "equity"
+        )
         rows = data.bars
         source = data.source
     bars = []
     for row in rows:
         date_value = row.get("date") if isinstance(row, dict) else row.date
         observed_at = _to_iso(date_value)
-        close = getattr(row, "close", None) if not isinstance(row, dict) else row.get("close")
+        close = (
+            getattr(row, "close", None)
+            if not isinstance(row, dict)
+            else row.get("close")
+        )
         if close is None:
             continue
-        get = (lambda name: getattr(row, name, None)) if not isinstance(row, dict) else row.get
-        bars.append({
-            "observed_at": observed_at,
-            "open": get("open"),
-            "high": get("high"),
-            "low": get("low"),
-            "close": close,
-            "volume": get("volume"),
-        })
+        get = (
+            (lambda name: getattr(row, name, None))
+            if not isinstance(row, dict)
+            else row.get
+        )
+        bars.append(
+            {
+                "observed_at": observed_at,
+                "open": get("open"),
+                "high": get("high"),
+                "low": get("low"),
+                "close": close,
+                "volume": get("volume"),
+            }
+        )
     if not bars:
         raise ResearchClientError("No usable daily bars returned")
-    return {"instrument": {"symbol": symbol, "market": market}, "source": source, "bars": bars[-520:]}
+    return {
+        "instrument": {"symbol": symbol, "market": market},
+        "source": source,
+        "bars": bars[-520:],
+    }
 
 
 def _a_share_history(symbol: str, market: str) -> tuple[list[dict[str, Any]], str]:
     prefix = {"SSE": "sh", "SZSE": "sz", "BJSE": "bj"}[market]
     try:
         prefix = {"SSE": "sh", "SZSE": "sz", "BJSE": "bj"}[market]
-        rows = data_tools._kline_tencent(symbol, "day", 520, prefix=prefix)  # shared Vibe A-share path
+        rows = data_tools._kline_tencent(
+            symbol, "day", 520, prefix=prefix
+        )  # shared Vibe A-share path
         if rows:
             return rows, "tencent"
     except Exception:  # noqa: BLE001

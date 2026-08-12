@@ -60,7 +60,7 @@ It does not make decisions for you. It pulls together quotes, analyst reports, v
 |---|---|
 | 📊&nbsp;**Daily&nbsp;Review** | Index quotes · **Global markets** (Dow / S&P / Nasdaq overnight + Hang Seng / HS Tech) · Watchlist quotes · **Short-term sentiment** (consecutive limit-up ladder, seal rate, break rate, promotion rate) · **Market-wide turnover top 20** · Market breadth · Sector fund-flow trends · Sector rotation · One-click AI review |
 | 📡&nbsp;**News&nbsp;Radar** | 108 public RSS feeds across 12 tracks · AI-distilled "today's takeaways" · A-share filings and public news linked to your watchlist |
-| 🔍&nbsp;**Instrument&nbsp;Data** | Full A-share data plus exchange-aware public/Yahoo market data for US, European, HK and KR securities. Charts come first; TradeAgent supplies deterministic read-only Skills: equity-only `worth-buy-stocks`, plus cross-asset `markov-method`, `technical-basic`, `risk-analysis`, and `volatility-regime`. Markov includes a live regime ribbon, 3×3 transition matrix, stationary distribution and adjustable thresholds; the new skills cover technical confirmation, historical tail risk and volatility state. |
+| 🔍&nbsp;**Instrument&nbsp;Data** | Full A-share data plus exchange-aware public/Yahoo market data for US, European, HK and KR securities. Charts come first; US equities can use SEC Company Facts fundamentals and filing-history skills, alongside equity-only `worth-buy-stocks` and the cross-asset price-series skills. |
 | ⚔️&nbsp;**Multi-perspective&nbsp;Research** | Two controlled modes: **bull-vs-bear debate** and a **research team** with fundamentals, market-structure and event-risk specialists followed by a neutral lead. Every role shares one factual dossier and deliberately avoids trade instructions. Add multiple pasted notes or TXT / Markdown / text PDF files for one run. The team may explicitly include one open IBKR position, with a separate opt-in for portfolio-wide goals/risk preferences. |
 | ⭐&nbsp;**Watchlist** | **Paste a whole batch of tickers at once** (commas, spaces or newlines) · one-screen table (price, change, PE, PB, turnover) · **live quotes toggle** (top right, off by default; refreshes every 3s during trading hours, auto-pauses outside them and when the tab is hidden) · hand the whole list to your AI. Stored locally |
 | 🧩&nbsp;**Sectors** | Sector and value-chain skeletons |
@@ -98,6 +98,12 @@ Three public data toolkits are **vendored directly into this repo** — `git clo
 
 - 108 public RSS feeds across 12 industry tracks, merged into `backend/newsradar.py`. Standard library only, no API keys.
 - **Upstream**: <https://github.com/simonlin1212/investment-news>
+
+### US fundamentals, filings, and company news
+
+- **SEC EDGAR:** TradeAgent's `fundamental` and `filings` skills use typed Company Facts and submissions providers with filed-date provenance. Set `VR_SEC_USER_AGENT`; also set `TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=sec_company_facts` when launching through Compose (the local launcher selects it automatically). The skill catalog reports unconfigured capabilities instead of presenting them as runnable.
+- **Company news:** Finnhub is preferred when `VR_FINNHUB_API_KEY` is configured. Otherwise the app uses an explicitly labelled Yahoo Search best-effort fallback adapted from the Vibe-Trading data-tool pattern, with provider, freshness, degradation-gap, and stale-cache metadata.
+- Yahoo Search does not promise complete coverage, and it never substitutes for Finnhub-only earnings data.
 
 > All data comes from public sources. Vibe-Research only performs objective data aggregation and presents public rankings as-is — **it does not recommend stocks, predict price moves, time trades, or assign subjective scores**. What you do with the data is up to you and your AI.
 
@@ -241,14 +247,16 @@ backend and the Vibe frontend; it does not start or call PA Master. Press
 ### TradeAgent Skills
 
 Vibe owns instrument selection, normalized market-data loading, AI entry points,
-and report presentation. Deterministic price-series analytics run in the sibling
-TradeAgent service. The repositories share a strict instrument contract
-(`symbol` + `market`) and up to 520 daily OHLCV bars. Equity series keep the
-existing Yahoo/A-share paths; crypto daily bars come from Coinbase and retain
-fractional volume.
+and report presentation. Deterministic analytics run in the sibling TradeAgent
+service. Price skills use a strict instrument contract (`symbol` + `market`) and
+up to 520 daily OHLCV bars. US fundamental and filing skills use TradeAgent's
+existing typed SEC providers, so provider payloads are not copied into the UI
+bridge. Crypto daily bars come from Coinbase and retain fractional volume.
 
 | Skill | Equities | Crypto | Primary inputs and outputs |
 |---|---:|---:|---|
+| `fundamental` | US | — | Point-in-time SEC growth, margins, cash flow, leverage, and available valuation factors |
+| `filings` | US | — | SEC filing counts, 8-K activity, and 10-K/10-Q recency |
 | `worth-buy-stocks` | Yes | — | Trend, relative strength, risk vetoes, and reference levels |
 | `markov-method` | Yes | Yes | Bull/Bear/Sideways state, transition matrix, and stationary distribution |
 | `technical-basic` | Yes | Yes | EMA, ADX/DMI, RSI, Bollinger Bands, OBV, and volume confirmation; complete OHLCV required |
@@ -319,6 +327,7 @@ and enable the bridge in `.env`:
 ```bash
 docker build -t trade-research:latest ../TradeAgent
 # Set VR_TRADE_RESEARCH_ENABLED=true and VR_TRADE_RESEARCH_API_TOKEN in .env
+# Set VR_SEC_USER_AGENT and TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=sec_company_facts for SEC skills
 COMPOSE_PROFILES=research docker compose up -d --build
 ```
 

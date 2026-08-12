@@ -113,6 +113,27 @@ class HistoricalSeries:
     bars: list[HistoricalBar]
 
 
+@dataclass(frozen=True, slots=True)
+class CompanyNewsItem:
+    """Normalized company-news metadata retained by Vibe Research."""
+
+    headline: str
+    summary: str | None
+    publisher: str | None
+    published_at: str | None
+    url: str | None
+    category: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CompanyNewsFeed:
+    """Immutable provider result used inside the company-news chain."""
+
+    symbol: str
+    source: str
+    items: tuple[CompanyNewsItem, ...]
+
+
 class MarketDataProvider(Protocol):
     def snapshot(self, provider_symbol: str) -> InstrumentSnapshot: ...
 

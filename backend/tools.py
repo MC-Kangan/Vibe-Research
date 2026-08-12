@@ -129,7 +129,7 @@ TOOLS: list[dict] = [
        "查加密货币市值排名、24小时成交量、供应量、历史高点与全市场主导率上下文。",
        {"symbol": {"type": "string", "description": "加密货币代码，如 BTC"}}, ["symbol"]),
     _t("query_market_news",
-       "查美股或欧洲股票的公司新闻。使用 Finnhub trial；需后端设置 VR_FINNHUB_API_KEY，覆盖率需逐交易所验证。",
+       "查美股或欧洲股票的公司新闻。配置时优先使用 Finnhub；否则使用明确标注来源的 Yahoo Search 备用路径。",
        {"symbol": {"type": "string", "description": "美股或带交易所后缀的欧洲代码"},
         "days": {"type": "integer", "description": "回溯天数，默认 30，最大 365"}}, ["symbol"]),
     _t("query_market_earnings",
@@ -149,7 +149,7 @@ TOOLS: list[dict] = [
        "运行一个获准的 TradeAgent 确定性研究技能，返回可复用的技术、风险或状态指标。结果是只读研究证据，不是交易指令。必须使用带交易所后缀的海外代码。",
        {
            "symbol": {"type": "string", "description": "A股代码、美股代码、带交易所后缀的欧洲代码或加密货币代码"},
-           "skill": {"type": "string", "enum": ["worth-buy-stocks", "markov-method", "technical-basic", "risk-analysis", "volatility-regime"]},
+           "skill": {"type": "string", "enum": ["fundamental", "filings", "worth-buy-stocks", "markov-method", "technical-basic", "risk-analysis", "volatility-regime"]},
            "asset_type": {"type": "string", "enum": ["equity", "crypto"], "description": "默认 equity"},
            "parameters": {"type": "object", "description": "可选技能参数；省略时使用技能默认值"},
        },

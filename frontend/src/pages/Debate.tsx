@@ -90,13 +90,13 @@ export function Debate() {
     let cancelled = false;
     api.researchSkills().then(async (payload) => {
       if (cancelled) return;
-      const supported = payload.skills.filter((skill) => (skill.supported_asset_types || ["equity"]).includes(assetType));
+      const supported = payload.skills.filter((skill) => skill.scope !== "portfolio" && (skill.supported_asset_types || ["equity"]).includes(assetType));
       setSkillCatalog(supported);
       setSkillCatalogStatus(payload.configured ? "" : tr("TradeAgent skills are not configured", "TradeAgent 技能尚未配置"));
       try {
         const defaults = await api.researchSkillDefaults();
         if (cancelled) return;
-        const savedDefaults = defaults[assetType].filter((name) => supported.some((skill) => skill.name === name));
+        const savedDefaults = defaults[assetType].filter((name) => supported.some((skill) => skill.name === name && skill.available !== false));
         setDefaultResearchSkills(savedDefaults);
         setSelectedResearchSkills(savedDefaults);
         setSkillDefaultStatus("");
@@ -212,7 +212,7 @@ export function Debate() {
         </div>
         {skillCatalog.length > 0 ? <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{skillCatalog.map((skill) => {
           const checked = selectedResearchSkills.includes(skill.name);
-          return <label key={skill.name} className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-xs transition-colors ${checked ? "border-primary/40 bg-primary/[0.06]" : "border-border/50"}`}><input type="checkbox" className="mt-0.5" checked={checked} disabled={running} onChange={() => setSelectedResearchSkills((current) => checked ? current.filter((name) => name !== skill.name) : [...current, skill.name])} /><span><span className="flex flex-wrap items-center gap-1"><strong className="font-medium text-foreground">{skill.name}</strong>{defaultResearchSkills.includes(skill.name) && <span className="rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">{tr("default", "默认")}</span>}</span><span className="mt-0.5 block line-clamp-2 text-[11px] text-muted-foreground">{skill.description}</span></span></label>;
+          return <label key={skill.name} className={`flex items-start gap-2 rounded-lg border p-2 text-xs transition-colors ${skill.available === false ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${checked ? "border-primary/40 bg-primary/[0.06]" : "border-border/50"}`}><input type="checkbox" className="mt-0.5" checked={checked} disabled={running || skill.available === false} onChange={() => setSelectedResearchSkills((current) => checked ? current.filter((name) => name !== skill.name) : [...current, skill.name])} /><span><span className="flex flex-wrap items-center gap-1"><strong className="font-medium text-foreground">{skill.name}</strong>{defaultResearchSkills.includes(skill.name) && <span className="rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">{tr("default", "默认")}</span>}</span><span className="mt-0.5 block line-clamp-2 text-[11px] text-muted-foreground">{skill.description}</span>{skill.available === false && <span className="mt-1 block text-[10px] text-warning">Provider required: {(skill.missing_capabilities || []).join(", ") || "not configured"}</span>}</span></label>;
         })}</div> : <p className="mt-2 text-xs text-muted-foreground">{skillCatalogStatus || tr("No approved skills support this asset type.", "没有获准技能支持该资产类型。")}</p>}
         {skillCatalog.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" disabled={running} onClick={() => saveSkillDefaults(selectedResearchSkills)} className="rounded-lg border border-border/60 px-2.5 py-1.5 text-[11px] hover:border-primary/40 disabled:opacity-50">{tr("Save selection as defaults", "将当前选择设为默认")}</button>{defaultResearchSkills.length > 0 && <button type="button" disabled={running} onClick={() => saveSkillDefaults([])} className="rounded-lg px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50">{tr("Clear defaults", "清除默认")}</button>}{skillDefaultStatus && <span className="text-[10px] text-muted-foreground">{skillDefaultStatus}</span>}</div>}
         <p className="mt-2 text-[10px] text-muted-foreground/70">{tr("Defaults are preselected, never forced. Uncheck them for one run or add other skills; unselected skills are not run. The AI cannot alter calculations or execute orders.", "默认技能只会预先勾选，不会被强制运行；你可以为本次分析取消或增加技能，未选择的技能不会运行。AI 无法修改计算或执行订单。")}</p>

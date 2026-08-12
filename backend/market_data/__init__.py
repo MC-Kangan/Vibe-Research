@@ -8,7 +8,8 @@ from .models import (
     ProviderTimeoutError,
     UnsupportedSymbolError,
 )
-from .finnhub import get_company_news, get_earnings
+from .finnhub import get_earnings
+from .news import get_company_news
 from .benchmarks import get_benchmarks
 from .overview import get_market_overview
 from .mood import get_market_mood

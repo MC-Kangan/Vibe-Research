@@ -24,9 +24,13 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            "vendor-react": ["react", "react-dom", "react-router-dom"],
-            "vendor-charts": ["echarts"],
+          manualChunks(id) {
+            if (id.includes("/node_modules/echarts/") || id.includes("/node_modules/zrender/")) {
+              return "vendor-charts";
+            }
+            if (id.includes("/node_modules/react/") || id.includes("/node_modules/react-dom/") || id.includes("/node_modules/react-router")) {
+              return "vendor-react";
+            }
           },
         },
       },

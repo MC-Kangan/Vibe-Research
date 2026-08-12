@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from urllib.parse import urlparse
 
 import requests
 
-from .models import ProviderConfigurationError, ProviderError, ProviderTimeoutError
+from .models import (
+    CompanyNewsFeed,
+    CompanyNewsItem,
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderTimeoutError,
+)
 from .service import resolve_symbol
 
 _BASE_URL = "https://finnhub.io/api/v1"
@@ -46,7 +53,7 @@ class FinnhubProvider:
             raise ProviderError(f"Finnhub: {payload['error']}")
         return payload
 
-    def company_news(self, symbol: str, days: int = 30, limit: int = 20) -> dict:
+    def company_news(self, symbol: str, days: int = 30, limit: int = 20) -> CompanyNewsFeed:
         provider_symbol = resolve_symbol(symbol).provider_symbol
         end = date.today()
         start = end - timedelta(days=max(1, min(days, 365)))
@@ -56,15 +63,25 @@ class FinnhubProvider:
             "to": end.isoformat(),
         })
         rows = payload if isinstance(payload, list) else []
-        items = [{
-            "headline": row.get("headline"),
-            "summary": row.get("summary"),
-            "source": row.get("source"),
-            "published_at": row.get("datetime"),
-            "url": row.get("url"),
-            "category": row.get("category"),
-        } for row in rows[:max(1, min(limit, 50))] if isinstance(row, dict)]
-        return {"symbol": provider_symbol, "source": self.source, "items": items}
+        items: list[CompanyNewsItem] = []
+        for row in rows[:max(1, min(limit, 50))]:
+            if not isinstance(row, dict) or not str(row.get("headline") or "").strip():
+                continue
+            published_at = None
+            try:
+                published_at = datetime.fromtimestamp(float(row["datetime"]), UTC).isoformat().replace("+00:00", "Z")
+            except (KeyError, TypeError, ValueError, OverflowError):
+                pass
+            raw_url = str(row.get("url") or "").strip()
+            items.append(CompanyNewsItem(
+                headline=str(row["headline"]).strip(),
+                summary=str(row["summary"]).strip() if row.get("summary") else None,
+                publisher=str(row["source"]).strip() if row.get("source") else None,
+                published_at=published_at,
+                url=raw_url if urlparse(raw_url).scheme in {"http", "https"} else None,
+                category=str(row["category"]).strip() if row.get("category") else None,
+            ))
+        return CompanyNewsFeed(symbol=provider_symbol, source=self.source, items=tuple(items))
 
     def earnings(self, symbol: str, limit: int = 12) -> dict:
         provider_symbol = resolve_symbol(symbol).provider_symbol
@@ -80,10 +97,6 @@ class FinnhubProvider:
             "surprise_pct": row.get("surprisePercent"),
         } for row in rows[:max(1, min(limit, 30))] if isinstance(row, dict)]
         return {"symbol": provider_symbol, "source": self.source, "items": items}
-
-
-def get_company_news(symbol: str, days: int = 30, limit: int = 20) -> dict:
-    return FinnhubProvider().company_news(symbol, days, limit)
 
 
 def get_earnings(symbol: str, limit: int = 12) -> dict:

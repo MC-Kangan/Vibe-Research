@@ -64,7 +64,7 @@ Vibe-Research 是一个开源、自托管的「个人 AI 投研看板」，覆�
 |---|---|
 | 📊&nbsp;**每&#8288;日&#8288;复&#8288;盘** | 大盘指数 · **全球市场**（隔夜美股道指 / 标普 / 纳指 + 港股恒指 / 恒生科技）· 关注股票（自选实时行情）· **短线情绪**（连板股 / 最高连板 / 连板梯队 / 封板率 / 炸板率 / 晋级率）· **全市场成交额 TOP20** · 市场情绪（大盘宽度 / 题材投机 / 涨跌停）· 板块资金趋势榜 · 资金轮动 · AI 当日复盘 |
 | 📡&nbsp;**资&#8288;讯&#8288;雷&#8288;达** | 12 赛道 108 个公开 RSS 源 · AI 一键提炼「今日要点」· A 股公告 / 公开新闻（挂钩你的关注列表）|
-| 🔍&nbsp;**标&#8288;的&#8288;数&#8288;据** | **A 股**：行情 · 估值 · 财报 · 研报 · 公告 · 新闻 · 资金面等完整数据。**美股 / 欧洲股 / 港股 / 韩股**：交易所感知的 Yahoo/公开行情与关键财务。价格图优先展示，底部可运行 TradeAgent 的只读确定性 Skills：股票专用 `worth-buy-stocks`，以及股票 / 加密货币共用的 `markov-method`、`technical-basic`、`risk-analysis`、`volatility-regime`。Markov 提供 regime ribbon、3×3 转移矩阵、稳态分布和可调阈值；新技能覆盖技术确认、历史尾部风险与波动率状态。|
+| 🔍&nbsp;**标&#8288;的&#8288;数&#8288;据** | **A 股**：行情 · 估值 · 财报 · 研报 · 公告 · 新闻 · 资金面等完整数据。**美股 / 欧洲股 / 港股 / 韩股**：交易所感知的 Yahoo/公开行情与关键财务。价格图优先展示；美股可运行 SEC Company Facts 基本面与 filings 技能，另有股票专用 `worth-buy-stocks`，以及股票 / 加密货币共用的价格序列技能。|
 | ⚔️&nbsp;**多&#8288;视&#8288;角&#8288;研&#8288;究** | 两种受控模式：① **多空辩论**（多方 / 空方 / 可选反驳 / 中立主持）；② **研究团队**（基本面、市场结构、事件风险三位专项研究员 + 中立负责人）。所有角色共享同一份客观底稿，刻意不产出交易指令。可同时粘贴多条笔记或上传多个 TXT / Markdown / 文字型 PDF；材料只在本次运行中使用、不会持久化。研究团队还可显式选择**单个 IBKR 开放持仓**，并通过独立开关决定是否附带组合层面的目标 / 风险偏好。|
 | ⭐&nbsp;**自&#8288;选&#8288;股** | **批量粘贴一串代码即加**（逗号 / 空格 / 换行都行）· 一屏表格总览（现价 / 涨跌 / PE / PB / 换手）· **实时行情开关**（右上角，默认关；开了在交易时段每 3 秒自动刷新，非交易时段与页面切走时自动暂停）· 一键交给 AI 读。只存本地 |
 | 🧩&nbsp;**板&#8288;块&#8288;中&#8288;心** | 板块 + 产业链环节骨架 |
@@ -102,6 +102,12 @@ Vibe-Research 把三套公开数据源**直接集成进仓库**——`git clone`
 
 - 12 赛道 108 个公开 RSS 源，已并入 `backend/newsradar.py` + `backend/news_sources.json`：纯标准库、零 key、已按合规词表过滤（剔除赌 / 预测市场 / 加密等）。
 - **上游**：<https://github.com/simonlin1212/investment-news>
+
+### 美股基本面、监管文件与公司新闻
+
+- **SEC EDGAR**：TradeAgent 的 `fundamental` 与 `filings` 使用 typed Company Facts、submissions 和 filed-date provenance。设置 `VR_SEC_USER_AGENT`；使用 Compose 时还需设置 `TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=sec_company_facts`（本地一键脚本会自动选择）。技能目录会明确报告未配置的 provider capability，而不会把它显示为可运行。
+- **公司新闻**：配置 `VR_FINNHUB_API_KEY` 时优先使用 Finnhub；未配置或短暂失败时使用从 Vibe-Trading 数据工具模式复用的 Yahoo Search 备用适配器。响应会标明实际 provider、抓取时间、降级缺口和 stale 状态。
+- Yahoo Search 是无 key 的 best-effort 备用源，不承诺完整覆盖；Finnhub earnings 仍是独立可选能力，不会被新闻备用源替代。
 
 > 数据均来自公开源。Vibe-Research 只做客观信息整理与公开榜单呈现（连板股 / 成交额榜等，与东财 / 同花顺同款客观数据），**只呈现事实、不推荐个股、不预测涨跌、不给买卖时机、不做主观评分**；用这些数据做什么分析、看什么方向，由你和你自己的 AI 决定。
 
@@ -246,10 +252,12 @@ bash scripts/start-local-stack.sh
 
 ### TradeAgent Skills
 
-Vibe 只负责标的选择、行情归一化、AI 入口和报告展示；确定性价格序列分析由同级目录的 TradeAgent 执行。两边通过严格的 instrument contract（`symbol` + `market`）和最多 520 根日线 OHLCV 对接。股票行情沿用现有 Yahoo / A 股数据路径，加密货币日线由 Coinbase 提供，成交量保留小数。
+Vibe 只负责标的选择、行情归一化、AI 入口和报告展示；确定性分析由同级目录的 TradeAgent 执行。价格类技能通过严格的 instrument contract（`symbol` + `market`）接收最多 520 根日线 OHLCV；美股基本面与 filings 技能复用 TradeAgent 已有的 typed SEC providers，不把 provider payload 复制进 UI bridge。股票行情沿用现有 Yahoo / A 股数据路径，加密货币日线由 Coinbase 提供，成交量保留小数。
 
 | Skill | 股票 | 加密货币 | 输入 / 输出重点 |
 |---|---:|---:|---|
+| `fundamental` | ✓（美股） | — | SEC point-in-time 增长、利润率、现金流、杠杆和可用估值因子 |
+| `filings` | ✓（美股） | — | SEC 申报数量、8-K 活跃度与 10-K / 10-Q 时效 |
 | `worth-buy-stocks` | ✓ | — | 趋势、相对强度、风险否决与参考价位 |
 | `markov-method` | ✓ | ✓ | Bull / Bear / Sideways 状态、转移矩阵与稳态分布 |
 | `technical-basic` | ✓ | ✓ | EMA、ADX/DMI、RSI、布林带、OBV 与量能确认；要求完整 OHLCV |
@@ -319,6 +327,8 @@ docker build -t trade-research:latest ../TradeAgent
 # .env 中同时设置：
 # VR_TRADE_RESEARCH_ENABLED=true
 # VR_TRADE_RESEARCH_API_TOKEN=一个随机共享密钥
+# VR_SEC_USER_AGENT=VibeResearch/0.3 your-email@example.com
+# TRADE_RESEARCH_FUNDAMENTAL_PROVIDER=sec_company_facts
 COMPOSE_PROFILES=research docker compose up -d --build
 ```
 
@@ -447,6 +457,8 @@ portfolio_manager 角色，产出「买 / 卖 / 仓位多少」。**本项目刻
 研究团队可选一个开放的 IBKR 持仓作为上下文。发送前界面会明确预览交易所感知代码、数量、成本、标记价、未实现盈亏、NAV 占比和快照日期；不会顺带发送其他持仓。投资目标和风险偏好有单独开关，默认不发送，只有在它们确实与单仓分析相关时才勾选。
 
 多空辩论与研究团队还可显式多选获准的 TradeAgent 技能，也可按股票 / 加密货币分别把当前选择保存为默认。默认技能只会在下次运行前预先勾选，仍可临时取消或增加；未选择的技能不会运行。默认设置持久化在 `VR_DATA_DIR`，重启或换设备访问同一部署仍然有效。Vibe 会复用一次行情准备、每个选中技能只计算一次，再把完全相同的只读结果加入共享底稿；例如 `technical-basic` 可成为多方和空方共同引用的技术指标证据。普通 API 模型的受控 AI 工作流也可按需调用 `run_research_skill` Vibe Method。技能仍受白名单、资产类型和交易所感知代码约束，不执行订单；CLI 模型继续使用上下文模式，不会自行调用工具。
+
+`我的持仓 → 总览` 还提供组合级 TradeAgent 技能。用户可从规范化的 IBKR、已计入总览的手工股票及 Coinbase / 手工钱包持仓中选择 2–9 个标的，一次运行相关性分析和只做多资产配置情景。首期方法包括等权、逆波动率、风险平价和最大分散化，并显示相关性热力图、情景权重、风险贡献、组合波动率、分散化比率和有效资产数。Vibe 只向 TradeAgent 发送规范化代码和有界日线，不发送账户标识、数量或原始持仓；输出是基于历史价格的数学情景，不是目标仓位或再平衡指令。
 
 ### 多份补充材料
 

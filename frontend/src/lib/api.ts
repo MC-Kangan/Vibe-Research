@@ -15,6 +15,9 @@ const API_ERROR_MESSAGES: Record<string, [string, string]> = {
   research_skill_required: ["Select at least one analysis skill.", "请至少选择一个分析技能。"],
   research_skill_not_enabled: ["The request contains a skill that is not enabled.", "请求中包含未启用的分析技能。"],
   tradeagent_not_configured: ["TradeAgent is not configured.", "TradeAgent 尚未配置。"],
+  research_asset_unsupported: ["The selected skills do not support this asset type.", "所选技能不支持该资产类型。"],
+  tradeagent_request_failed: ["TradeAgent could not complete the research request.", "TradeAgent 无法完成本次研究请求。"],
+  portfolio_instruments_duplicate: ["Portfolio instruments must be unique.", "组合标的不可重复。"],
   holding_quantity_invalid: ["Holding quantity must be greater than zero.", "持仓数量必须大于零。"],
   manual_holding_not_found: ["The manual stock holding was not found.", "未找到该手工股票持仓。"],
   close_position_values_invalid: ["Close price and quantity must be greater than zero.", "清仓价格和数量必须大于零。"],
@@ -76,6 +79,9 @@ export interface ResearchSkill {
     }>;
   } | null;
   supported_asset_types?: Array<"equity" | "crypto">;
+  scope?: "instrument" | "portfolio";
+  available?: boolean;
+  missing_capabilities?: string[];
 }
 export interface ResearchSkillsResponse {
   configured: boolean;
@@ -98,6 +104,37 @@ export interface ResearchRunResponse {
   symbol: string;
   market: string;
   results: ResearchRunResult[];
+}
+
+export interface PortfolioResearchCandidate {
+  key: string; symbol: string; market: string; asset_type: "equity" | "crypto";
+  label: string; source: string;
+}
+export interface PortfolioResearchUniverse {
+  status: "available" | "partial" | "unavailable";
+  items: PortfolioResearchCandidate[];
+  gaps: Array<{ source: string; detail: string }>;
+}
+export interface PortfolioResearchAsset {
+  instrument: { symbol: string; market: string };
+  annualized_volatility: number; weight: number | null; risk_contribution: number | null;
+}
+export interface PortfolioResearchPresentation {
+  template: "correlation-analysis-v1" | "asset-allocation-v1";
+  method?: "equal_weight" | "inverse_volatility" | "risk_parity" | "max_diversification";
+  assets: PortfolioResearchAsset[]; correlation_matrix: number[][];
+  aligned_return_count: number; lookback: number;
+  portfolio_volatility?: number; diversification_ratio?: number; effective_asset_count?: number;
+}
+export interface PortfolioResearchResult {
+  analyst: "correlation-analysis" | "asset-allocation"; status: "complete" | "partial" | "failed";
+  summary: string; presentation?: PortfolioResearchPresentation | null;
+  limitations?: string[];
+}
+export interface PortfolioResearchResponse {
+  instruments: Array<{ symbol: string; market: string; asset_type: "equity" | "crypto" }>;
+  results: PortfolioResearchResult[];
+  generated_at?: string;
 }
 
 export interface InstrumentOverview {
@@ -570,9 +607,9 @@ export interface AShareHistoricalBar {
 }
 export interface MarketNewsItem {
   headline: string | null; summary: string | null; source: string | null;
-  published_at: number | null; url: string | null; category: string | null;
+  published_at: number | string | null; url: string | null; category: string | null;
 }
-export interface MarketNews { symbol: string; source: string; items: MarketNewsItem[] }
+export interface MarketNews { symbol: string; source: string; items: MarketNewsItem[]; fetched_at?: string; is_stale?: boolean; gaps?: Array<{ provider: string; detail: string }> }
 export interface MarketEarningsItem {
   period: string | null; quarter: number | null; year: number | null;
   actual: number | null; estimate: number | null; surprise: number | null; surprise_pct: number | null;
@@ -629,6 +666,11 @@ export const api = {
   previewCryptoCsv: (content: string) => request<{ rows: CryptoPosition[] }>("/portfolio/crypto/import/preview", "POST", { content }),
   importCryptoCsv: (content: string) => request<CryptoPosition[]>("/portfolio/crypto/import", "POST", { content }),
   portfolioSummary: (reportingCurrency?: string) => get<PortfolioSummary>(`/portfolio/summary${reportingCurrency ? `?reporting_currency=${encodeURIComponent(reportingCurrency)}` : ""}`),
+  portfolioResearchCandidates: () => get<PortfolioResearchUniverse>("/research/portfolio/candidates"),
+  runPortfolioResearch: (instruments: PortfolioResearchCandidate[], method: "equal_weight" | "inverse_volatility" | "risk_parity" | "max_diversification", lookback: number) =>
+    request<PortfolioResearchResponse>("/research/portfolio/run", "POST", {
+      instruments: instruments.map(({ symbol, asset_type }) => ({ symbol, asset_type })), method, lookback,
+    }),
   authSession: () => get<AuthSession>("/auth/session"),
   authLogin: (username: string, password: string) => request<AuthSession>("/auth/login", "POST", { username, password }),
   authLogout: () => request<{ authenticated: boolean }>("/auth/logout", "POST"),

@@ -134,8 +134,9 @@ def data_sources_status():
     """Configuration status only; never returns provider credentials."""
     return {"data": {
         "yahoo": {"configured": True, "coverage": "US/Europe quotes and daily history"},
+        "yahoo_company_news": {"configured": True, "coverage": "Best-effort no-key US/Europe company-news fallback"},
         "sec_edgar": {"configured": bool(os.environ.get("VR_SEC_USER_AGENT", "").strip()), "coverage": "US filings and selected XBRL facts"},
-        "finnhub": {"configured": bool(os.environ.get("VR_FINNHUB_API_KEY", "").strip()), "coverage": "US/Europe company news and earnings trial"},
+        "finnhub": {"configured": bool(os.environ.get("VR_FINNHUB_API_KEY", "").strip()), "coverage": "Company news and earnings where Finnhub's configured plan provides coverage"},
         "europe_filings": {"configured": False, "coverage": "European regulatory filings not yet connected"},
         "coinbase_market": {"configured": True, "coverage": "Public USD spot quotes and daily candles"},
         "coinbase_account": {"configured": crypto_portfolio.coinbase_configured(), "coverage": "Read-only Coinbase balances"},
@@ -235,7 +236,7 @@ def market_data_news(
     symbol: str = Query(..., min_length=1, max_length=24),
     days: int = Query(30, ge=1, le=365),
 ):
-    """Finnhub company news; optional and enabled with VR_FINNHUB_API_KEY."""
+    """Company news via configured Finnhub, with an explicit Yahoo Search fallback."""
     try:
         return {"data": market_data.get_company_news(symbol, days=days)}
     except market_data.MarketDataError as exc:

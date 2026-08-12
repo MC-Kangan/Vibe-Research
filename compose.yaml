@@ -62,6 +62,9 @@ services:
     environment:
       TRADE_RESEARCH_API_TOKEN: ${VR_TRADE_RESEARCH_API_TOKEN:-}
       TRADE_RESEARCH_PRICE_PROVIDER: ${TRADE_RESEARCH_PRICE_PROVIDER:-yahoo}
+      TRADE_RESEARCH_FUNDAMENTAL_PROVIDER: ${TRADE_RESEARCH_FUNDAMENTAL_PROVIDER:-}
+      TRADE_RESEARCH_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:-}
+      TRADE_RESEARCH_DATA_ROOT: /var/lib/trade-research
       TRADE_RESEARCH_DATA_DIR: /var/lib/trade-research
     volumes:
       - trade-research-data:/var/lib/trade-research

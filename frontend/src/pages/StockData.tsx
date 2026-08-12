@@ -121,6 +121,7 @@ export function StockData() {
   const [marketFilings, setMarketFilings] = useState<SecFilings | null>(null);
   const [marketSecFacts, setMarketSecFacts] = useState<SecFacts | null>(null);
   const [marketSourceGaps, setMarketSourceGaps] = useState<string[]>([]);
+  const [skillCapabilities, setSkillCapabilities] = useState<string[]>([]);
   const [aShareHistory, setAShareHistory] = useState<MarketHistoricalSeries | null>(null);
   const runIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -137,7 +138,7 @@ export function StockData() {
     setLoading(true); setErr(null); setDepNote(null); setVal(null); setReports([]); setNews([]); setPctl(null); setFin(null); setAnns([]);
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
     setGStock(null); setCashflow(null); setMarketSnapshot(null); setMarketHistory(null);
-    setMarketNews(null); setMarketEarnings(null); setMarketFilings(null); setMarketSecFacts(null); setMarketSourceGaps([]);
+    setMarketNews(null); setMarketEarnings(null); setMarketFilings(null); setMarketSecFacts(null); setMarketSourceGaps([]); setSkillCapabilities([]);
     setAShareHistory(null);
 
     try {
@@ -145,6 +146,7 @@ export function StockData() {
       if (rid !== runIdRef.current) return;
 
       const data = overview.data;
+      setSkillCapabilities(overview.capabilities);
       setCode(overview.symbol);
       setVal(data.valuation ?? null);
       setReports(data.reports ?? []);
@@ -697,6 +699,7 @@ export function StockData() {
         symbol={marketSnapshot?.instrument.provider_symbol || val?.code || null}
         supported={Boolean(marketSnapshot || val)}
         assetType={assetType}
+        capabilities={skillCapabilities}
       />
 
       <Disclaimer />

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
 import type { MarketHistoricalBar } from "@/lib/api";
+import { init as initEChart } from "@/lib/echarts";
 import { useLocale } from "@/lib/i18n";
 
 interface Props {
@@ -15,7 +15,7 @@ export function PriceHistoryChart({ bars, currency }: Props) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const chart = echarts.init(host);
+    const chart = initEChart(host);
     const completeBars = bars.filter((bar) =>
       bar.open != null && bar.high != null && bar.low != null && bar.close != null,
     );
