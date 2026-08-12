@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import threading
+import time
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -69,8 +71,10 @@ class YahooProvider:
     def __init__(self, http: Any = requests, timeout: float = 10.0):
         self._http = http
         self._timeout = timeout
+        self._cache: dict[tuple[str, str, str], tuple[float, dict[str, Any], str]] = {}
+        self._cache_lock = threading.Lock()
 
-    def _chart(self, provider_symbol: str, range_: str, interval: str) -> tuple[dict[str, Any], str]:
+    def _fetch_chart(self, provider_symbol: str, range_: str, interval: str) -> tuple[dict[str, Any], str]:
         url = f"{_BASE_URL}/{quote(provider_symbol, safe='')}"
         try:
             response = self._http.get(
@@ -107,6 +111,25 @@ class YahooProvider:
         if returned_symbol != provider_symbol.upper():
             raise ProviderError("行情数据源返回了不匹配的股票")
         fetched_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return item, fetched_at
+
+    def _chart(self, provider_symbol: str, range_: str, interval: str) -> tuple[dict[str, Any], str]:
+        """Cache normalized chart payloads and retain the last good value during outages."""
+        key = (provider_symbol.upper(), range_, interval)
+        ttl = 30.0 if range_ == "5d" else 900.0
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._cache.get(key)
+        if cached and now - cached[0] < ttl:
+            return cached[1], cached[2]
+        try:
+            item, fetched_at = self._fetch_chart(provider_symbol, range_, interval)
+        except (ProviderError, ProviderTimeoutError):
+            if cached:
+                return cached[1], cached[2]
+            raise
+        with self._cache_lock:
+            self._cache[key] = (now, item, fetched_at)
         return item, fetched_at
 
     @staticmethod

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Search, FileText, Newspaper, Loader2, AlertCircle, LineChart, BarChart3, Megaphone,
@@ -19,7 +19,6 @@ import {
   type GlobalStock, type HkCashflow, type MarketSnapshot, type MarketHistoricalSeries,
   type MarketNews, type MarketEarnings, type SecFilings, type SecFacts,
 } from "@/lib/api";
-import { isUSSymbol, stockDataRoute } from "@/lib/market-symbols";
 import { cn } from "@/lib/utils";
 import { getLocale, useLocale } from "@/lib/i18n";
 
@@ -124,146 +123,112 @@ export function StockData() {
   const [marketSourceGaps, setMarketSourceGaps] = useState<string[]>([]);
   const [aShareHistory, setAShareHistory] = useState<MarketHistoricalSeries | null>(null);
   const runIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const run = async () => {
     const c = code.trim().toUpperCase();
     if (!c) { setErr(tr("Enter a symbol", "请输入代码")); return; }
     const rid = ++runIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true); setErr(null); setDepNote(null); setVal(null); setReports([]); setNews([]); setPctl(null); setFin(null); setAnns([]);
     setMargin([]); setBlockT([]); setHolders([]); setDividend([]); setFundFlow([]); setDt(null); setLockup(null); setBlocks(null); setHotCon([]); setQa([]);
     setGStock(null); setCashflow(null); setMarketSnapshot(null); setMarketHistory(null);
     setMarketNews(null); setMarketEarnings(null); setMarketFilings(null); setMarketSecFacts(null); setMarketSourceGaps([]);
     setAShareHistory(null);
 
-    if (assetType === "crypto") {
-      try {
-        const [snapshot, history] = await Promise.all([
-          api.marketSnapshot(c, "crypto"),
-          api.marketBars(c, "1y", "1d", "crypto"),
-        ]);
-        if (rid === runIdRef.current) {
-          setCode(snapshot.instrument.symbol);
-          setMarketSnapshot(snapshot);
-          setMarketHistory(history);
-          setMarketSourceGaps(locale === "en" ? ["Traditional company fundamentals and valuation do not apply", "On-chain flows and token unlock data are not integrated"] : ["传统公司基本面与估值不适用", "链上资金流与代币解锁数据尚未接入"]);
-        }
-      } catch (e) {
-        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
-      } finally {
-        if (rid === runIdRef.current) setLoading(false);
-      }
-      return;
-    }
-
-    const route = stockDataRoute(c);
-
-    // 显式欧洲交易所后缀走新的规范化数据路径；不改变现有 A 股和 global fallback。
-    if (route === "market") {
-      const noteGap = (label: string) => (error: unknown) => {
-        if (rid !== runIdRef.current) return;
-        const detail = error instanceof ApiError ? error.message : tr("Data source is currently unavailable", "数据源当前不可达");
-        setMarketSourceGaps((current) => [...current, `${label}：${detail}`]);
-      };
-      api.marketNews(c).then((data) => { if (rid === runIdRef.current) setMarketNews(data); }).catch(noteGap(tr("News", "新闻")));
-      api.marketEarnings(c).then((data) => { if (rid === runIdRef.current) setMarketEarnings(data); }).catch(noteGap("Earnings"));
-      if (isUSSymbol(c)) {
-        api.marketFilings(c).then((data) => { if (rid === runIdRef.current) setMarketFilings(data); }).catch(noteGap(tr("SEC filings", "SEC 文件")));
-        api.marketSecFacts(c).then((data) => { if (rid === runIdRef.current) setMarketSecFacts(data); }).catch(noteGap(tr("SEC fundamentals", "SEC 基本面")));
-      }
-      try {
-        const [snapshot, history, supplemental] = await Promise.all([
-          api.marketSnapshot(c),
-          api.marketBars(c, "1y", "1d"),
-          isUSSymbol(c) ? api.globalStock(c).catch(() => null) : Promise.resolve(null),
-        ]);
-        if (rid === runIdRef.current) {
-          setMarketSnapshot(snapshot);
-          setMarketHistory(history);
-          setGStock(supplemental);
-        }
-      } catch (e) {
-        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
-      } finally {
-        if (rid === runIdRef.current) setLoading(false);
-      }
-      return;
-    }
-
-    // 非 A 股、非显式欧洲后缀：保持原有美股 / 港股 / 韩股路径。
-    if (route === "global") {
-      // 港股现金流独立回填（美股返回 404 → 静默留空，卡片不渲染）
-      api.hkCashflow(c).then((cf) => { if (rid === runIdRef.current) setCashflow(cf); }).catch(() => { if (rid === runIdRef.current) setCashflow(null); });
-      try {
-        const g = await api.globalStock(c);
-        if (rid === runIdRef.current) setGStock(g);
-      } catch (e) {
-        if (rid === runIdRef.current) setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
-      } finally {
-        if (rid === runIdRef.current) setLoading(false);
-      }
-      return;
-    }
-
-    // A 股：竞态守卫（快速换代码时只让最新一次回填）+ 资金面/筹码独立回填、不阻塞主数据
-    const ok = <T,>(set: (v: T) => void) => (v: T) => { if (rid === runIdRef.current) set(v); };
-    api.margin(c).then(ok(setMargin)).catch(() => {});
-    api.blockTrade(c).then(ok(setBlockT)).catch(() => {});
-    api.holders(c).then(ok(setHolders)).catch(() => {});
-    api.dividend(c).then(ok(setDividend)).catch(() => {});
-    api.fundFlow(c).then(ok(setFundFlow)).catch(() => {});
-    api.dragonTiger(c).then(ok(setDt)).catch(() => {});
-    api.lockup(c).then(ok(setLockup)).catch(() => {});
-    api.blocks(c).then(ok(setBlocks)).catch(() => {});
-    api.hotConcepts(c).then(ok(setHotCon)).catch(() => {});
-    api.investorQa(c).then(ok(setQa)).catch(() => {});
-    api.aShareBars(c).then((aBars) => {
-      if (rid !== runIdRef.current) return;
-      setAShareHistory({
-        provider_symbol: c,
-        range: "240d",
-        interval: "1d",
-        source: "mootdx",
-        fetched_at: new Date().toISOString(),
-        bars: aBars.map((bar) => ({
-          date: String(bar.date),
-          open: bar.open == null ? null : Number(bar.open),
-          high: bar.high == null ? null : Number(bar.high),
-          low: bar.low == null ? null : Number(bar.low),
-          close: bar.close == null ? null : Number(bar.close),
-          adjusted_close: bar.close == null ? null : Number(bar.close),
-          volume: bar.volume == null ? null : Number(bar.volume),
-          currency: "CNY",
-        })),
-      });
-    }).catch(() => {});
     try {
-      // 行情+估值+研报+历史分位+财务+公告（新闻单独降级）
-      const [v, r, p, f, a] = await Promise.all([
-        api.valuation(c),
-        api.reports(c).catch(() => []),
-        api.percentile(c).catch(() => null),
-        api.financials(c).catch(() => null),
-        api.announcements(c).catch(() => []),
-      ]);
+      const overview = await api.instrumentOverview(c, assetType, controller.signal);
       if (rid !== runIdRef.current) return;
-      setVal(v);
-      setReports(r);
-      setPctl(p);
-      setFin(f);
-      setAnns(a);
-      try {
-        const n = await api.news(c);
-        if (rid === runIdRef.current) setNews(n);
-      } catch (e) {
-        if (rid === runIdRef.current && e instanceof ApiError && e.status === 501) setDepNote(e.message);
+
+      const data = overview.data;
+      setCode(overview.symbol);
+      setVal(data.valuation ?? null);
+      setReports(data.reports ?? []);
+      setPctl(data.percentile ?? null);
+      setFin(data.financials ?? null);
+      setAnns(data.announcements ?? []);
+      setMarketSnapshot(data.market_snapshot ?? null);
+      setMarketHistory(data.market_history ?? null);
+      setGStock(data.global_stock ?? null);
+      setCashflow(data.cashflow ?? null);
+
+      if (data.a_share_history) {
+        setAShareHistory({
+          provider_symbol: overview.symbol,
+          range: "240d",
+          interval: "1d",
+          source: "mootdx",
+          fetched_at: new Date().toISOString(),
+          bars: data.a_share_history.map((bar) => ({
+            date: String(bar.date),
+            open: bar.open == null ? null : Number(bar.open),
+            high: bar.high == null ? null : Number(bar.high),
+            low: bar.low == null ? null : Number(bar.low),
+            close: bar.close == null ? null : Number(bar.close),
+            adjusted_close: bar.close == null ? null : Number(bar.close),
+            volume: bar.volume == null ? null : Number(bar.volume),
+            currency: "CNY",
+          })),
+        });
       }
-    } catch (e) {
-      if (rid !== runIdRef.current) return;
-      setErr(e instanceof ApiError ? e.message : tr("Query failed", "查询失败"));
+
+      const gaps = overview.gaps.map((gap) => `${gap.section}: ${gap.detail}`);
+      if (overview.route === "crypto") {
+        gaps.push(...(locale === "en"
+          ? ["Traditional company fundamentals and valuation do not apply", "On-chain flows and token unlock data are not integrated"]
+          : ["传统公司基本面与估值不适用", "链上资金流与代币解锁数据尚未接入"]));
+      }
+      setMarketSourceGaps(gaps);
+      if (overview.route === "a-share" && gaps.length) setDepNote(gaps.join("; "));
+      if (overview.status === "unavailable") {
+        setErr(gaps[0] || tr("No data is available for this instrument", "该标的暂无可用数据"));
+      }
+
+      const noteGap = (label: string) => (error: unknown) => {
+        if (rid !== runIdRef.current || controller.signal.aborted) return;
+        const detail = error instanceof ApiError ? error.message : tr("Data source is currently unavailable", "数据源当前不可达");
+        setMarketSourceGaps((current) => [...current, `${label}: ${detail}`]);
+      };
+      const ok = <T,>(set: (value: T) => void) => (value: T) => {
+        if (rid === runIdRef.current) set(value);
+      };
+
+      if (overview.route === "market") {
+        api.marketNews(overview.symbol, 30, controller.signal).then(ok(setMarketNews)).catch(noteGap(tr("News", "新闻")));
+        api.marketEarnings(overview.symbol, controller.signal).then(ok(setMarketEarnings)).catch(noteGap("Earnings"));
+        if (overview.capabilities.includes("filings")) {
+          api.marketFilings(overview.symbol, controller.signal).then(ok(setMarketFilings)).catch(noteGap(tr("SEC filings", "SEC 文件")));
+          api.marketSecFacts(overview.symbol, controller.signal).then(ok(setMarketSecFacts)).catch(noteGap(tr("SEC fundamentals", "SEC 基本面")));
+        }
+      }
+
+      if (overview.route === "a-share") {
+        api.margin(overview.symbol, controller.signal).then(ok(setMargin)).catch(() => {});
+        api.blockTrade(overview.symbol, controller.signal).then(ok(setBlockT)).catch(() => {});
+        api.holders(overview.symbol, controller.signal).then(ok(setHolders)).catch(() => {});
+        api.dividend(overview.symbol, controller.signal).then(ok(setDividend)).catch(() => {});
+        api.fundFlow(overview.symbol, controller.signal).then(ok(setFundFlow)).catch(() => {});
+        api.dragonTiger(overview.symbol, controller.signal).then(ok(setDt)).catch(() => {});
+        api.lockup(overview.symbol, controller.signal).then(ok(setLockup)).catch(() => {});
+        api.blocks(overview.symbol, controller.signal).then(ok(setBlocks)).catch(() => {});
+        api.hotConcepts(overview.symbol, controller.signal).then(ok(setHotCon)).catch(() => {});
+        api.investorQa(overview.symbol, controller.signal).then(ok(setQa)).catch(() => {});
+        api.news(overview.symbol, controller.signal).then(ok(setNews)).catch((error: unknown) => {
+          if (rid === runIdRef.current && error instanceof ApiError && error.status === 501) setDepNote(error.message);
+        });
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (rid === runIdRef.current) setErr(error instanceof ApiError ? error.message : tr("Query failed", "查询失败"));
     } finally {
       if (rid === runIdRef.current) setLoading(false);
     }
   };
+
 
   const metrics = val ? [
     { k: tr("Price", "现价"), v: fmt(val.price) },

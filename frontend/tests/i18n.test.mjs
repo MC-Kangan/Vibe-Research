@@ -6,10 +6,11 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("English is the default and the selected locale is persisted", () => {
   const i18n = read("../src/lib/i18n.tsx");
+  const localeState = read("../src/lib/locale-state.ts");
   const html = read("../index.html");
-  assert.match(i18n, /storageGet\(LOCALE_KEY\) === "zh-CN" \? "zh-CN" : "en"/);
-  assert.match(i18n, /currentLocale = next/);
-  assert.match(i18n, /storageSet\(LOCALE_KEY, next\)/);
+  assert.match(localeState, /storageGet\(LOCALE_KEY\) === "zh-CN" \? "zh-CN" : "en"/);
+  assert.match(i18n, /setCurrentLocale\(next\)/);
+  assert.match(localeState, /storageSet\(LOCALE_KEY, locale\)/);
   assert.match(i18n, /document\.documentElement\.lang = locale/);
   assert.match(html, /<html lang="en">/);
 });
@@ -80,8 +81,20 @@ test("English financial amounts use millions instead of Chinese hundred-millions
 
 test("shared API failures and research uploads use the selected locale", () => {
   const api = read("../src/lib/api.ts");
-  const backend = read("../../backend/app.py");
+  const backend = read("../../backend/api/ai_routes.py");
   assert.match(api, /translate\(getLocale\(\), "Cannot reach the backend/);
+  assert.match(api, /API_ERROR_MESSAGES/);
+  assert.match(api, /invalid_stock_symbol:/);
+  assert.match(api, /payload\?\.code/);
   assert.match(api, /files, locale: getLocale\(\)/);
   assert.match(backend, /exc\.localized\(request\.locale\)/);
+});
+
+test("shared number formatting follows the active locale", () => {
+  const marketSymbols = read("../src/lib/market-symbols.ts");
+  const portfolioFormatting = read("../src/lib/portfolio-format.ts");
+  assert.match(marketSymbols, /Intl\.NumberFormat\(getLocale\(\)/);
+  assert.match(portfolioFormatting, /toLocaleString\(getLocale\(\)/);
+  assert.doesNotMatch(marketSymbols, /Intl\.NumberFormat\("zh-CN"/);
+  assert.doesNotMatch(portfolioFormatting, /toLocaleString\("zh-CN"/);
 });

@@ -106,26 +106,25 @@ def validate_skill_support(skills: list[str], asset_type: str, catalog: list[dic
         raise UnsupportedSkillAssetError(f"Skills do not support {asset_type}: {', '.join(unsupported)}")
 
 
-def run_skill(
+def run_analysis(
     *,
-    skill: str,
+    skills: list[str],
     symbol: str,
     market: str,
     skill_parameters: dict[str, dict[str, Any]],
     price_series: list[dict[str, Any]],
-    asset_type: str = "equity",
 ) -> dict[str, Any]:
-    if skill not in ALLOWED_SKILLS:
-        raise ResearchClientError("Selected skill is not enabled")
+    if not skills or any(skill not in ALLOWED_SKILLS for skill in skills):
+        raise ResearchClientError("Selected skills are not enabled")
     request = {
         "instrument": {"symbol": symbol, "market": market},
-        "analysts": [skill],
+        "analysts": skills,
         "skill_parameters": skill_parameters,
         "price_series": price_series,
     }
     try:
         response = requests.post(
-            f"{_base_url()}/skills/{skill}/run",
+            f"{_base_url()}/analyze",
             json=request,
             headers={**_headers(), "Content-Type": "application/json"},
             timeout=_timeout(),
@@ -146,6 +145,66 @@ def run_skill(
     if not isinstance(payload, dict):
         raise ResearchClientError("TradeAgent returned an invalid report payload")
     return payload
+
+
+def _split_full_report(report: dict[str, Any], selected: list[str]) -> list[dict[str, Any]]:
+    """Preserve the UI's one-report-per-skill shape from one batch report."""
+    report_results = report.get("results")
+    if not isinstance(report_results, list):
+        raise ResearchClientError("TradeAgent returned an invalid report payload")
+    by_skill = {
+        str(item.get("analyst")): item
+        for item in report_results
+        if isinstance(item, dict) and item.get("analyst")
+    }
+    shared = {key: value for key, value in report.items() if key != "results"}
+    return [
+        ({
+            "skill": skill,
+            "status": "complete",
+            "report": {**shared, "results": [by_skill[skill]]},
+        } if skill in by_skill else {
+            "skill": skill,
+            "status": "failed",
+            "detail": "TradeAgent did not return a result for the selected skill",
+        })
+        for skill in selected
+    ]
+
+
+def run_skills_full(
+    *,
+    symbol: str,
+    skills: list[str],
+    parameters: dict[str, dict[str, Any]] | None = None,
+    asset_type: str = "equity",
+) -> dict[str, Any]:
+    """Prepare market evidence once and return full per-skill UI reports."""
+    selected = list(dict.fromkeys(skills))
+    if not selected:
+        return {"symbol": symbol, "market": "", "results": []}
+    unknown = [skill for skill in selected if skill not in ALLOWED_SKILLS]
+    if unknown:
+        raise ResearchClientError(f"Selected skills are not enabled: {', '.join(unknown)}")
+    if not configured():
+        raise ResearchClientError("TradeAgent is not configured")
+
+    skill_parameters = parameters or {}
+    validate_skill_support(selected, asset_type, list_skills())
+    inputs = build_run_inputs(symbol, selected, skill_parameters, asset_type)
+    report = run_analysis(
+        skills=selected,
+        symbol=inputs["symbol"],
+        market=inputs["market"],
+        skill_parameters=skill_parameters,
+        price_series=inputs["price_series"],
+    )
+    return {
+        "symbol": inputs["symbol"],
+        "market": inputs["market"],
+        "asset_type": asset_type,
+        "results": _split_full_report(report, selected),
+    }
 
 
 def _compact_analyst_result_for_ai(result: dict[str, Any]) -> dict[str, Any]:
@@ -240,52 +299,19 @@ def run_skills_shared(
     asset_type: str = "equity",
 ) -> dict[str, Any]:
     """Run approved skills against one shared, market-qualified price payload."""
-    selected = list(dict.fromkeys(skills))
-    if not selected:
-        return {"symbol": symbol, "market": "", "results": []}
-    unknown = [skill for skill in selected if skill not in ALLOWED_SKILLS]
-    if unknown:
-        raise ResearchClientError(f"Selected skills are not enabled: {', '.join(unknown)}")
-    if not configured():
-        raise ResearchClientError("TradeAgent is not configured")
-
-    skill_parameters = parameters or {}
-    catalog = list_skills()
-    validate_skill_support(selected, asset_type, catalog)
-    inputs = build_run_inputs(symbol, selected, skill_parameters, asset_type)
-    completed: dict[str, dict[str, Any]] = {}
-    failures: dict[str, str] = {}
-
-    def execute(skill: str) -> tuple[str, dict[str, Any]]:
-        report = run_skill(
-            skill=skill,
-            symbol=inputs["symbol"],
-            market=inputs["market"],
-            skill_parameters=skill_parameters,
-            price_series=inputs["price_series"],
-            asset_type=asset_type,
-        )
-        return skill, compact_report_for_ai(report)
-
-    with ThreadPoolExecutor(max_workers=min(4, len(selected))) as executor:
-        futures = {executor.submit(execute, skill): skill for skill in selected}
-        for future in as_completed(futures):
-            requested_skill = futures[future]
-            try:
-                skill, report = future.result()
-                completed[skill] = report
-            except Exception as exc:  # noqa: BLE001 — one reusable skill must not hide other evidence
-                failures[requested_skill] = str(exc)
-
+    full = run_skills_full(
+        symbol=symbol,
+        skills=skills,
+        parameters=parameters,
+        asset_type=asset_type,
+    )
     return {
-        "symbol": inputs["symbol"],
-        "market": inputs["market"],
-        "asset_type": asset_type,
+        **full,
         "results": [
-            ({"skill": skill, "status": "complete", "report": completed[skill]}
-             if skill in completed else
-             {"skill": skill, "status": "failed", "detail": failures.get(skill, "Skill failed")})
-            for skill in selected
+            ({**item, "report": compact_report_for_ai(item["report"])}
+             if item.get("status") == "complete" and isinstance(item.get("report"), dict)
+             else item)
+            for item in full["results"]
         ],
     }
 

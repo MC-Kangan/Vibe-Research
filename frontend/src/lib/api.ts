@@ -4,9 +4,31 @@
 import { getLocale, translate } from "@/lib/i18n";
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message);
   }
+}
+
+const API_ERROR_MESSAGES: Record<string, [string, string]> = {
+  invalid_stock_symbol: ["Enter a six-digit A-share symbol, a US ticker, or an exchange-qualified European ticker.", "请输入六位 A 股代码、美股代码或带交易所后缀的欧洲股票代码。"],
+  invalid_a_share_code: ["A-share symbols must contain exactly six digits.", "A 股代码必须为六位数字。"],
+  research_skill_required: ["Select at least one analysis skill.", "请至少选择一个分析技能。"],
+  research_skill_not_enabled: ["The request contains a skill that is not enabled.", "请求中包含未启用的分析技能。"],
+  tradeagent_not_configured: ["TradeAgent is not configured.", "TradeAgent 尚未配置。"],
+  holding_quantity_invalid: ["Holding quantity must be greater than zero.", "持仓数量必须大于零。"],
+  manual_holding_not_found: ["The manual stock holding was not found.", "未找到该手工股票持仓。"],
+  close_position_values_invalid: ["Close price and quantity must be greater than zero.", "清仓价格和数量必须大于零。"],
+  close_date_required: ["Close date is required.", "请填写清仓日期。"],
+  close_date_invalid: ["Close date must use YYYY-MM-DD format.", "清仓日期必须使用 YYYY-MM-DD 格式。"],
+  ibkr_not_configured: ["IBKR Flex current-position import is not configured.", "IBKR Flex 当前持仓导入尚未配置。"],
+  authentication_disabled: ["Application authentication is disabled.", "应用登录功能未启用。"],
+  login_rate_limited: ["Too many failed login attempts; try again later.", "登录失败次数过多，请稍后重试。"],
+  invalid_credentials: ["Invalid username or password.", "用户名或密码错误。"],
+};
+
+function errorMessage(payload: any, fallback: string): string {
+  const messages = API_ERROR_MESSAGES[String(payload?.code || "")];
+  return messages ? translate(getLocale(), messages[0], messages[1]) : String(payload?.detail || fallback);
 }
 
 export const AUTH_INVALIDATED_EVENT = "vibe-auth-invalidated";
@@ -76,6 +98,26 @@ export interface ResearchRunResponse {
   symbol: string;
   market: string;
   results: ResearchRunResult[];
+}
+
+export interface InstrumentOverview {
+  symbol: string;
+  route: "a-share" | "market" | "global" | "crypto";
+  status: "available" | "partial" | "unavailable";
+  capabilities: string[];
+  gaps: Array<{ section: string; detail: string }>;
+  data: {
+    valuation?: Valuation;
+    reports?: Report[];
+    percentile?: ValPercentile;
+    financials?: Financials;
+    announcements?: Announcement[];
+    a_share_history?: AShareHistoricalBar[];
+    market_snapshot?: MarketSnapshot;
+    market_history?: MarketHistoricalSeries;
+    global_stock?: GlobalStock;
+    cashflow?: HkCashflow;
+  };
 }
 
 export interface ExtractedResearchContext {
@@ -206,10 +248,10 @@ export async function downloadReport(id: string, name: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE" = "GET", body?: unknown): Promise<T> {
+async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE" = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
   let resp: Response;
   const headers: Record<string, string> = { ...authHeaders() };
-  const opts: RequestInit = { method, credentials: "same-origin" };
+  const opts: RequestInit = { method, credentials: "same-origin", signal };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -217,7 +259,8 @@ async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE
   if (Object.keys(headers).length > 0) opts.headers = headers;
   try {
     resp = await fetch(`/api${path}`, opts);
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new ApiError(translate(getLocale(), "Cannot reach the backend. Start it with uvicorn app:app --port 8900.", "连接不到后端，请先启动 backend（uvicorn app:app --port 8900）"), 0);
   }
   let payload: any = null;
@@ -227,16 +270,16 @@ async function request<T>(path: string, method: "GET" | "POST" | "PUT" | "DELETE
     /* 非 JSON 响应 */
   }
   if (!resp.ok) {
-    if (resp.status === 401) {
+    if (resp.status === 401 && payload?.code !== "invalid_credentials") {
       if (!path.startsWith("/auth/")) notifyAuthInvalidated();
       throw new ApiError(translate(getLocale(), "The backend requires a login or access key. Sign in or enter VR_API_KEY in AI Setup.", "后端需要登录或访问密钥：请先登录，或在「接入 AI」页填写 VR_API_KEY"), 401);
     }
-    throw new ApiError(payload?.detail || `HTTP ${resp.status}`, resp.status);
+    throw new ApiError(errorMessage(payload, `HTTP ${resp.status}`), resp.status, payload?.code);
   }
   return (payload?.data ?? payload) as T;
 }
 
-const get = <T>(path: string) => request<T>(path, "GET");
+const get = <T>(path: string, signal?: AbortSignal) => request<T>(path, "GET", undefined, signal);
 
 export interface Quote {
   name: string; price: number | null; last_close: number | null; change_pct: number | null;
@@ -564,20 +607,14 @@ export const api = {
   dataSourceStatus: () => get<DataSourceStatus>("/data-sources/status"),
   intelligenceFeed: (symbols: string[], kinds: IntelligenceKind[] = ["filings", "news", "earnings"], limitPerSymbol = 5) =>
     request<IntelligenceFeed>("/intelligence/feed", "POST", { symbols, kinds, limit_per_symbol: limitPerSymbol }),
-  globalStock: (symbol: string) => get<GlobalStock>(`/global/stock?symbol=${encodeURIComponent(symbol)}`),
-  hkCashflow: (symbol: string) => get<HkCashflow>(`/global/hk/cashflow?symbol=${encodeURIComponent(symbol)}`),
-  marketSnapshot: (symbol: string, assetType: "equity" | "crypto" = "equity") => get<MarketSnapshot>(`/market-data/snapshot?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}`),
-  marketBars: (symbol: string, range = "1y", interval = "1d", assetType: "equity" | "crypto" = "equity") => get<MarketHistoricalSeries>(
-    `/market-data/bars?symbol=${encodeURIComponent(symbol)}&range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&asset_type=${assetType}`,
-  ),
+  instrumentOverview: (symbol: string, assetType: "equity" | "crypto" = "equity", signal?: AbortSignal) => get<InstrumentOverview>(`/instruments/overview?symbol=${encodeURIComponent(symbol)}&asset_type=${assetType}`, signal),
   cryptoOverview: () => get<CryptoOverview>("/market-data/crypto/overview"),
-  aShareBars: (code: string, offset = 240) => get<AShareHistoricalBar[]>(`/kline?code=${encodeURIComponent(code)}&category=4&offset=${offset}`),
-  marketNews: (symbol: string, days = 30) => get<MarketNews>(
-    `/market-data/news?symbol=${encodeURIComponent(symbol)}&days=${days}`,
+  marketNews: (symbol: string, days = 30, signal?: AbortSignal) => get<MarketNews>(
+    `/market-data/news?symbol=${encodeURIComponent(symbol)}&days=${days}`, signal,
   ),
-  marketEarnings: (symbol: string) => get<MarketEarnings>(`/market-data/earnings?symbol=${encodeURIComponent(symbol)}`),
-  marketFilings: (symbol: string) => get<SecFilings>(`/market-data/filings?symbol=${encodeURIComponent(symbol)}`),
-  marketSecFacts: (symbol: string) => get<SecFacts>(`/market-data/sec-facts?symbol=${encodeURIComponent(symbol)}`),
+  marketEarnings: (symbol: string, signal?: AbortSignal) => get<MarketEarnings>(`/market-data/earnings?symbol=${encodeURIComponent(symbol)}`, signal),
+  marketFilings: (symbol: string, signal?: AbortSignal) => get<SecFilings>(`/market-data/filings?symbol=${encodeURIComponent(symbol)}`, signal),
+  marketSecFacts: (symbol: string, signal?: AbortSignal) => get<SecFacts>(`/market-data/sec-facts?symbol=${encodeURIComponent(symbol)}`, signal),
   radar: () => get<RadarData>("/radar"),
   radarRefresh: () => request<RadarData>("/radar/refresh", "POST"),
   portfolio: () => get<PortfolioData>("/portfolio"),
@@ -616,17 +653,17 @@ export const api = {
   quote: (codes: string) => get<Record<string, Quote>>(`/quote?codes=${codes}`),
   quotes: (symbols: string) => get<Record<string, Quote>>(`/quotes?symbols=${encodeURIComponent(symbols)}`),
   reports: (code: string) => get<Report[]>(`/reports?code=${code}`),
-  news: (code: string) => get<NewsItem[]>(`/news?code=${code}`),
-  margin: (code: string) => get<MarginRow[]>(`/margin?code=${code}`),
-  blockTrade: (code: string) => get<BlockTradeRow[]>(`/block-trade?code=${code}`),
-  holders: (code: string) => get<HolderRow[]>(`/holders?code=${code}`),
-  dividend: (code: string) => get<DividendRow[]>(`/dividend?code=${code}`),
-  fundFlow: (code: string) => get<FundFlowRow[]>(`/fund-flow?code=${code}`),
-  dragonTiger: (code: string) => get<DragonTiger>(`/dragon-tiger?code=${code}`),
-  lockup: (code: string) => get<Lockup>(`/lockup?code=${code}`),
-  blocks: (code: string) => get<Blocks>(`/blocks?code=${code}`),
-  hotConcepts: (code: string) => get<HotConcept[]>(`/hot-concepts?code=${code}`),
-  investorQa: (code: string) => get<QaRow[]>(`/investor-qa?code=${code}`),
+  news: (code: string, signal?: AbortSignal) => get<NewsItem[]>(`/news?code=${code}`, signal),
+  margin: (code: string, signal?: AbortSignal) => get<MarginRow[]>(`/margin?code=${code}`, signal),
+  blockTrade: (code: string, signal?: AbortSignal) => get<BlockTradeRow[]>(`/block-trade?code=${code}`, signal),
+  holders: (code: string, signal?: AbortSignal) => get<HolderRow[]>(`/holders?code=${code}`, signal),
+  dividend: (code: string, signal?: AbortSignal) => get<DividendRow[]>(`/dividend?code=${code}`, signal),
+  fundFlow: (code: string, signal?: AbortSignal) => get<FundFlowRow[]>(`/fund-flow?code=${code}`, signal),
+  dragonTiger: (code: string, signal?: AbortSignal) => get<DragonTiger>(`/dragon-tiger?code=${code}`, signal),
+  lockup: (code: string, signal?: AbortSignal) => get<Lockup>(`/lockup?code=${code}`, signal),
+  blocks: (code: string, signal?: AbortSignal) => get<Blocks>(`/blocks?code=${code}`, signal),
+  hotConcepts: (code: string, signal?: AbortSignal) => get<HotConcept[]>(`/hot-concepts?code=${code}`, signal),
+  investorQa: (code: string, signal?: AbortSignal) => get<QaRow[]>(`/investor-qa?code=${code}`, signal),
   industry: (top = 20) => get<IndustryData>(`/industry?top=${top}`),
   myReports: () => get<MyReport[]>("/myreports"),
   researchSkills: () => get<ResearchSkillsResponse>("/research/skills"),

@@ -157,11 +157,10 @@ def test_tradeagent_request_uses_its_strict_instrument_contract(monkeypatch):
         return Response()
 
     monkeypatch.setattr(research.requests, "post", post)
-    research.run_skill(
-        skill="risk-analysis",
+    research.run_analysis(
+        skills=["risk-analysis"],
         symbol="BTC-USD",
         market="CRYPTO",
-        asset_type="crypto",
         skill_parameters={},
         price_series=[{
             "instrument": {"symbol": "BTC-USD", "market": "CRYPTO"},

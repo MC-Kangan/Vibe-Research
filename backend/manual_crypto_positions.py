@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import os
 import threading
 from datetime import datetime, timezone
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import market_data
+import position_store
 from crypto_portfolio_errors import CryptoPortfolioError
 
 _DATA_DIR = Path(os.environ.get("VR_DATA_DIR", "~/.vibe-research")).expanduser()
@@ -25,19 +25,13 @@ def _now() -> str:
 
 
 def get_all() -> list[dict[str, Any]]:
-    try:
-        payload = json.loads(_STORE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return []
+    payload = position_store.load("manual-crypto", _STORE)
     rows = payload.get("positions", []) if isinstance(payload, dict) else []
     return [row for row in rows if isinstance(row, dict)]
 
 
 def _write(rows: list[dict[str, Any]]) -> None:
-    _STORE.parent.mkdir(parents=True, exist_ok=True)
-    temporary = _STORE.with_suffix(_STORE.suffix + ".tmp")
-    temporary.write_text(json.dumps({"positions": rows, "updated_at": _now()}, ensure_ascii=False), encoding="utf-8")
-    os.replace(temporary, _STORE)
+    position_store.save("manual-crypto", {"positions": rows, "updated_at": _now()}, _STORE)
 
 
 def _validated(row: dict[str, Any]) -> dict[str, Any]:

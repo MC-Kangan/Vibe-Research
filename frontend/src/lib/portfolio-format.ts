@@ -1,7 +1,9 @@
+import { getLocale } from "./locale-state.ts";
+
 export const portfolioNumber = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value)
     ? "—"
-    : value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    : value.toLocaleString(getLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const portfolioSigned = (value: number | null | undefined): string =>
   value == null || !Number.isFinite(value) ? "—" : `${value > 0 ? "+" : ""}${portfolioNumber(value)}`;

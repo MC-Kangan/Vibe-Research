@@ -107,19 +107,24 @@ Vibe-Research 把三套公开数据源**直接集成进仓库**——`git clone`
 
 ## 架构
 
-一套数据层 + 受控工作流 + 两条模型出口：
+应用采用**模块化单体**：一个 React 客户端、一个 FastAPI 进程、一个本地 SQLite
+数据库，以及一个可选的确定性分析服务。这样既保持本地部署简单，也保留清晰的模块边界。
 
 ```
 Vibe-Research/
 ├── a-stock-data/      A 股全栈数据工具箱（数据源，v3.6.0，自带即用）
 ├── global-stock-data/ 美股 / 港股数据工具箱（数据源，v2.0.3，自带即用）
 ├── backend/           FastAPI :8900
+│   ├── app.py           仅负责组合、中间件和健康检查
+│   ├── api/             按产品关注点分组的路由
+│   ├── instrument_overview.py  统一标的读模型
 │   ├── astock.py        A 股数据（移植自 a-stock-data）
 │   ├── gstock.py        美股 / 港股数据（移植自 global-stock-data）
 │   ├── newsradar.py     资讯雷达（移植自 investment-news）
 │   ├── market.py        市场情绪 + 板块资金流 + 全球指数
-│   ├── portfolio.py     手工持仓 + 已清仓（存本地用户目录）
-│   ├── ibkr_*.py        IBKR Flex 导入、SQLite 分析账本与交易点位
+│   ├── position_store.py 共享 SQLite 持仓状态存储
+│   ├── portfolio.py     手工持仓与已清仓
+│   ├── ibkr_*.py        IBKR Flex 导入、分析账本与交易点位
 │   ├── crypto_*.py      Coinbase / 手工钱包与跨资产汇总
 │   ├── auth.py          可选单用户登录与可撤销 HttpOnly 会话
 │   ├── tools.py         统一只读 AI 工具注册表
@@ -139,15 +144,15 @@ Vibe-Research/
 flowchart LR
     User["用户 · React 仪表盘"]
 
-    subgraph VR["Vibe Research · 产品与编排层"]
-        UI["数据仪表盘与 AI 对话 UI<br/>React · Vite · :5899"]
-        API["FastAPI 路由<br/>backend/app.py · :8900"]
-        Data["市场数据归一化<br/>astock · gstock · market_data · newsradar"]
-        AI["受控 AI 工作流<br/>chat · debate · research_team · reflection"]
-        Tools["只读工具注册表与事实底稿<br/>tools.py · ai_workflows.py"]
+    subgraph VR["Vibe Research · 模块化单体"]
+        UI["React 仪表盘与 AI 对话<br/>:5899"]
+        API["FastAPI 组合根<br/>模块化 API 路由 · :8900"]
+        Overview["统一标的概览<br/>市场路由 + 归一化核心数据 + 缺口"]
+        Data["数据适配器<br/>A 股 · 全球股票 · Yahoo · 资讯"]
+        AI["受控 AI 工作流<br/>工具预算 + 事实底稿"]
         Positions["持仓服务<br/>IBKR Flex · Coinbase · 手工记录"]
-        Ledger["本地状态<br/>JSON 快照 · SQLite 台账/分析 · 报告"]
-        Bridge["Skills 桥接层<br/>research.py<br/>白名单 + 标的/OHLCV 合约"]
+        SQLite[("单一本地 SQLite<br/>持仓状态 · 台账 · 分析")]
+        Bridge["Skills 桥接层<br/>每次分析仅一个批量请求"]
     end
 
     subgraph Sources["外部数据与账户源"]
@@ -156,12 +161,10 @@ flowchart LR
         Wallet["Coinbase 账户<br/>与手工钱包"]
     end
 
-    subgraph TA["同级 TradeAgent 仓库 · 仅确定性分析"]
-        TAHTTP["带鉴权的 FastAPI<br/>/skills 与 /skills/name/run"]
-        App["ResearchApplication + ResearchEngine"]
-        Registry["冻结的 SkillRegistry<br/>worth-buy-stocks · markov-method<br/>technical-basic · risk-analysis<br/>volatility-regime"]
-        Inline["InlinePriceProvider<br/>校验有界 OHLCV 与数据来源"]
-        Report["经清洗、可审计的 ResearchReport<br/>full / partial 状态"]
+    subgraph TA["同级 TradeAgent · 可选确定性服务"]
+        TAHTTP["带鉴权的 /skills + 批量 /analyze"]
+        Engine["ResearchApplication<br/>不可变 SkillRegistry + 有界 OHLCV"]
+        Report["可审计的逐 Skill 报告<br/>full / partial 状态"]
     end
 
     subgraph Models["用户配置的模型运行时"]
@@ -173,40 +176,34 @@ flowchart LR
 
     User --> UI --> API
     Public --> Data
-    API --> Data --> UI
+    API --> Overview --> Data
+    Overview --> API --> UI
     API --> AI
-    AI <--> Tools
-    Tools --> Data
+    AI --> Data
     AI <--> ModelAPI
     AI <--> ModelCLI
-    AI --> UI
 
     Broker --> Positions
     Wallet --> Positions
-    API --> Positions <--> Ledger
-    Positions --> UI
+    API --> Positions <--> SQLite
+    Positions --> API
     Positions -. "用户显式操作" .-> AI
 
-    Data --> Bridge
     API --> Bridge
-    Bridge -- "symbol + market + 最多 520 根日线 OHLCV" --> TAHTTP
-    TAHTTP --> App --> Registry
-    App --> Inline
-    Registry --> Report
-    Inline --> Report
-    Report -- "经清洗的 JSON 报告" --> Bridge
-    Bridge --> UI
-    Bridge -. "压缩后的确定性证据" .-> Tools
+    Data --> Bridge
+    Bridge -- "单次请求：skills + 标的 + 最多 520 根日线" --> TAHTTP
+    TAHTTP --> Engine --> Report --> Bridge
+    Bridge -. "压缩后的确定性证据" .-> AI
     VibeTrading -. "视觉参考" .-> UI
 ```
 
 | 关注点 | 责任归属与数据流 |
 |---|---|
-| 数据源 | Vibe 的适配器读取公开数据和账户数据，先将各供应商响应归一化，再交给仪表盘、AI 工具或 Skills；缺失覆盖会明确展示。 |
-| AI 对话 | Vibe 选择固定工作流，限制可用的只读工具和轮次，构建事实底稿，再把用户配置的 API / CLI 模型输出流式返回 UI。 |
-| 分析仪表盘 | React 页面请求类型化 FastAPI 端点，展示图表、表格、数据缺口、确定性 Skill 报告与可选 AI 解读。 |
-| 持仓 | Vibe 只读导入 IBKR Flex 和 Coinbase，合并可选手工记录，并在本地保存快照与分析。持仓不会发给 TradeAgent。只有用户显式操作后才会进入 AI 上下文：持仓页 AI 按钮会发送当前展示的组合，研究团队模式只发送一个选中持仓。 |
-| Skills | Vibe 负责标的代码解析与 OHLCV 准备；TradeAgent 校验有界请求，运行不可在运行时修改的确定性 Skills，返回可审计的 full / partial 报告。它不负责经纪商、订单、持仓或 LLM。 |
+| 数据源 | Vibe 适配器读取数据；`instrument_overview.py` 统一负责市场路由，返回归一化核心数据、能力和显式缺口，React 不再编码供应商规则。短时行情缓存减少重复请求，短暂故障时可返回上次成功值。 |
+| AI 对话 | Vibe 维护单一英文标准提示词，限制只读工具和轮次，并构建事实底稿。语言选择仅作为输出指令/翻译层，不维护第二套提示词。 |
+| 分析仪表盘 | React 使用类型化 API。标的页仅发起一个可取消的核心请求并立即渲染，然后再加载新闻、业绩日历和公告，不阻塞图表。 |
+| 持仓 | Vibe 只读导入 IBKR Flex 和 Coinbase，并合并可选手工记录。可变持仓状态、交易台账和分析共用一个 SQLite 数据库；旧 JSON 仅一次导入。持仓只在用户显式操作后进入 AI 上下文，绝不发给 TradeAgent。 |
+| Skills | Vibe 只准备一次标的和 OHLCV，并通过单个 `/analyze` 请求发送全部选中 Skills。TradeAgent 校验有界载荷并返回可审计的 full / partial 报告；它不负责经纪商、订单、持仓或 LLM。 |
 
 依赖方向刻意保持单向：**Vibe Research 可以调用 TradeAgent，但
 TradeAgent 不会回调 Vibe Research**。因此，可复用的分析引擎与产品 UI、
@@ -214,6 +211,10 @@ TradeAgent 不会回调 Vibe Research**。因此，可复用的分析引擎与�
 Skill 结果作为证据，但无法修改 Skill 计算，也无法提交订单。名称相似的
 `HKUDS/Vibe-Trading` 并不是这个同级服务：Vibe Research 只参考其视觉语言，
 没有导入或调用它。
+
+这是系统刻意保留的唯一额外进程。如果现在就把数据适配器、持仓、AI 工作流或路由拆成多个服务，
+只会增加部署、网络和一致性成本。当前模块边界已提供长期扩展点；只有当独立扩容或独立部署成为可测量需求时，
+才应抽取新服务。
 
 **分级依赖**：行情（腾讯）+ 研报 / 公告（东财）**秒装可用**；akshare / mootdx 惰性导入，缺失时对应端点返回 501 + 安装提示，不拖垮服务。
 

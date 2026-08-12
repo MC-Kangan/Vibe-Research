@@ -103,19 +103,25 @@ Three public data toolkits are **vendored directly into this repo** — `git clo
 
 ## Architecture
 
-One data layer, controlled workflows and two model runtimes:
+The application is a **modular monolith**: one React client, one FastAPI process,
+one local SQLite database, and one optional deterministic-analysis service. This
+keeps local deployment simple while preserving clear module boundaries.
 
 ```
 Vibe-Research/
 ├── a-stock-data/      A-share data toolkit (vendored v3.6.0, ready to use)
 ├── global-stock-data/ US / HK data toolkit (vendored v2.0.3, ready to use)
 ├── backend/           FastAPI :8900
+│   ├── app.py           Composition root, middleware and health only
+│   ├── api/             Routers grouped by product concern
+│   ├── instrument_overview.py  One normalized instrument read model
 │   ├── astock.py        A-share data
 │   ├── gstock.py        US / HK data
 │   ├── newsradar.py     News radar
 │   ├── market.py        Market breadth + sector fund flows + global indices
-│   ├── portfolio.py     Manual portfolio (stored in your local user directory)
-│   ├── ibkr_*.py        IBKR Flex import, SQLite analytics ledger and executions
+│   ├── position_store.py Shared SQLite position-state store
+│   ├── portfolio.py     Manual portfolio and closed positions
+│   ├── ibkr_*.py        IBKR Flex import, analytics ledger and executions
 │   ├── crypto_*.py      Coinbase/manual wallets and cross-asset aggregation
 │   ├── auth.py          Optional single-user login and revocable HttpOnly sessions
 │   ├── tools.py         Shared read-only AI tool registry
@@ -135,15 +141,15 @@ Vibe-Research/
 flowchart LR
     User["User in the React dashboard"]
 
-    subgraph VR["Vibe Research · product and orchestration"]
-        UI["Dashboards and AI conversation UI<br/>React · Vite · :5899"]
-        API["FastAPI routes<br/>backend/app.py · :8900"]
-        Data["Market-data normalization<br/>astock · gstock · market_data · newsradar"]
-        AI["Controlled AI workflows<br/>chat · debate · research_team · reflection"]
-        Tools["Read-only tool registry and factual dossier<br/>tools.py · ai_workflows.py"]
+    subgraph VR["Vibe Research · modular monolith"]
+        UI["React dashboards and AI conversation<br/>:5899"]
+        API["FastAPI composition root<br/>modular API routers · :8900"]
+        Overview["Instrument overview<br/>routing + normalized core data + gaps"]
+        Data["Data adapters<br/>A-share · global · Yahoo · news"]
+        AI["Controlled AI workflows<br/>tool budgets + factual dossiers"]
         Positions["Position service<br/>IBKR Flex · Coinbase · manual records"]
-        Ledger["Local state<br/>JSON snapshots · SQLite ledger/analytics · reports"]
-        Bridge["Skills bridge<br/>research.py<br/>allowlist + instrument/OHLCV contract"]
+        SQLite[("One local SQLite store<br/>position state · ledger · analytics")]
+        Bridge["Skills bridge<br/>one batched request per analysis"]
     end
 
     subgraph Sources["External data and account sources"]
@@ -152,12 +158,10 @@ flowchart LR
         Wallet["Coinbase account<br/>and manual wallets"]
     end
 
-    subgraph TA["Sibling TradeAgent repository · deterministic analytics only"]
-        TAHTTP["Authenticated FastAPI<br/>/skills and /skills/name/run"]
-        App["ResearchApplication + ResearchEngine"]
-        Registry["Frozen SkillRegistry<br/>worth-buy-stocks · markov-method<br/>technical-basic · risk-analysis<br/>volatility-regime"]
-        Inline["InlinePriceProvider<br/>validates bounded OHLCV + provenance"]
-        Report["Sanitized, auditable ResearchReport<br/>full / partial status"]
+    subgraph TA["Sibling TradeAgent · optional deterministic service"]
+        TAHTTP["Authenticated /skills + batched /analyze"]
+        Engine["ResearchApplication<br/>immutable SkillRegistry + bounded OHLCV"]
+        Report["Auditable per-skill reports<br/>full / partial status"]
     end
 
     subgraph Models["User-configured model runtime"]
@@ -169,40 +173,34 @@ flowchart LR
 
     User --> UI --> API
     Public --> Data
-    API --> Data --> UI
+    API --> Overview --> Data
+    Overview --> API --> UI
     API --> AI
-    AI <--> Tools
-    Tools --> Data
+    AI --> Data
     AI <--> ModelAPI
     AI <--> ModelCLI
-    AI --> UI
 
     Broker --> Positions
     Wallet --> Positions
-    API --> Positions <--> Ledger
-    Positions --> UI
+    API --> Positions <--> SQLite
+    Positions --> API
     Positions -. "explicit user action" .-> AI
 
-    Data --> Bridge
     API --> Bridge
-    Bridge -- "symbol + market + up to 520 daily OHLCV bars" --> TAHTTP
-    TAHTTP --> App --> Registry
-    App --> Inline
-    Registry --> Report
-    Inline --> Report
-    Report -- "sanitized JSON report" --> Bridge
-    Bridge --> UI
-    Bridge -. "compact deterministic evidence" .-> Tools
+    Data --> Bridge
+    Bridge -- "one request: skills + instrument + up to 520 bars" --> TAHTTP
+    TAHTTP --> Engine --> Report --> Bridge
+    Bridge -. "compact evidence" .-> AI
     VibeTrading -. "visual reference" .-> UI
 ```
 
 | Concern | Owner and data flow |
 |---|---|
-| Data sources | Vibe adapters fetch public/account data and normalize provider-specific responses before dashboards, tools, or skills consume them. Missing coverage stays explicit. |
-| AI conversation | Vibe selects a fixed workflow, limits the available read-only tools and rounds, builds a factual dossier, and streams the configured API/CLI model's response back to the UI. |
-| Analysis dashboards | React pages request typed FastAPI endpoints and render charts, tables, source gaps, deterministic skill reports, and optional AI explanations. |
-| Positions | Vibe imports IBKR Flex and Coinbase read-only data, combines optional manual records, and keeps snapshots and analytics locally. Holdings are never sent to TradeAgent. They enter AI context only after an explicit user action: the Portfolio AI button sends the displayed portfolio, while research-team mode sends one selected position. |
-| Skills | Vibe owns symbol resolution and OHLCV preparation. TradeAgent validates the bounded request, runs immutable deterministic skills, and returns an auditable full/partial report. It has no broker, order, position, or LLM responsibility. |
+| Data sources | Vibe adapters fetch provider data. `instrument_overview.py` owns market routing and returns normalized core data, capabilities and explicit gaps, so React does not encode provider rules. Short-lived quote/history caching reduces repeated provider calls and can serve the last good value during a transient outage. |
+| AI conversation | Vibe selects a fixed English canonical prompt, limits read-only tools and rounds, builds a factual dossier, and streams the configured API/CLI model response. Locale is an output instruction/translation layer, not a second prompt implementation. |
+| Analysis dashboards | React uses typed APIs. The instrument page makes one cancellable core request, renders it immediately, then loads optional news, earnings and filings without blocking the chart. |
+| Positions | Vibe imports IBKR Flex and Coinbase read-only data and combines optional manual records. Mutable position state, the transaction ledger and analytics share one SQLite database; legacy JSON is imported once only. Holdings enter AI context solely after an explicit user action and are never sent to TradeAgent. |
+| Skills | Vibe prepares the instrument and OHLCV once and sends all selected skills in one `/analyze` request. TradeAgent validates the bounded payload and returns auditable full/partial reports. It has no broker, order, position, or LLM responsibility. |
 
 The dependency direction is intentionally one-way: **Vibe Research may call
 TradeAgent, but TradeAgent does not call back into Vibe Research**. This keeps
@@ -211,6 +209,13 @@ broker connections, and model provider. AI workflows may quote compact skill
 results as evidence, but they cannot change skill calculations or submit orders.
 The similarly named `HKUDS/Vibe-Trading` project is not this sibling service:
 Vibe Research credits its visual language only and does not import or call it.
+
+This boundary is deliberately the only extra process. Splitting data adapters,
+positions, AI workflows, or routers into separate services would add deployment,
+network and consistency costs without improving the current single-user product.
+The module boundaries provide expansion points inside the monolith; extract a
+service only if independent scaling or a separately owned deployment becomes a
+measured requirement.
 
 **Tiered dependencies**: quotes (Tencent) and reports/filings (Eastmoney) work with a minimal install. `akshare` / `mootdx` are imported lazily — if missing, only those endpoints return 501 with an install hint; the service still runs.
 

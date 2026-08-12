@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
 import secrets
-import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,10 +17,10 @@ except ImportError:  # optional until Coinbase account import is configured
     jwt = None
 
 from crypto_portfolio_errors import CryptoPortfolioError
+import position_store
 
 _DATA_DIR = Path(os.environ.get("VR_DATA_DIR", "~/.vibe-research")).expanduser()
 _STORE = _DATA_DIR / "coinbase-positions.json"
-_LOCK = threading.Lock()
 _FIAT = {"USD", "GBP", "EUR", "CHF", "CAD", "AUD", "JPY", "CNY", "HKD", "SGD"}
 _STABLE = {"USDC", "USDT", "DAI", "USDE", "FDUSD", "TUSD", "USDS", "PYUSD"}
 
@@ -113,10 +111,8 @@ def _fallback() -> dict[str, Any]:
 
 
 def get_snapshot() -> dict[str, Any]:
-    try:
-        return json.loads(_STORE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return _fallback()
+    payload = position_store.load("coinbase-current", _STORE)
+    return payload if isinstance(payload, dict) else _fallback()
 
 
 def refresh() -> dict[str, Any]:
@@ -128,9 +124,5 @@ def refresh() -> dict[str, Any]:
         "refreshed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "positions": rows, "warnings": [],
     }
-    with _LOCK:
-        _STORE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = _STORE.with_suffix(_STORE.suffix + ".tmp")
-        temporary.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, _STORE)
+    position_store.save("coinbase-current", snapshot, _STORE)
     return snapshot

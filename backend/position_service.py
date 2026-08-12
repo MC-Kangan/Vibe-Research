@@ -20,6 +20,7 @@ from typing import Any
 from xml.etree import ElementTree
 
 import requests
+import position_store
 
 
 class PositionServiceError(RuntimeError):
@@ -86,18 +87,12 @@ def _account_ref(account_id: str) -> str:
 
 
 def _load() -> dict[str, Any] | None:
-    try:
-        return json.loads(_store_path().read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return None
+    payload = position_store.load("ibkr-current", _store_path())
+    return payload if isinstance(payload, dict) else None
 
 
 def _save(snapshot: dict[str, Any]) -> None:
-    path = _store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
-    os.replace(temporary, path)
+    position_store.save("ibkr-current", snapshot, _store_path())
 
 
 def _status_snapshot() -> dict[str, Any]:

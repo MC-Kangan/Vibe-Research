@@ -95,21 +95,16 @@ def test_portfolio_separates_currency_totals(tmp_pf, monkeypatch):
     assert data["totals_by_currency"]["USD"]["pnl"] == pytest.approx(6)
 
 
-# ── issue #12：旧版数据在仓库内 .cache/，重下载会丢 → 自动迁到用户目录 ──
+# ── position JSON is imported once into the shared SQLite store ──
 
-def test_portfolio_legacy_migration(tmp_path, monkeypatch):
-    old = tmp_path / "repo-cache" / "portfolio.json"
-    old.parent.mkdir()
-    old.write_text('{"holdings": [{"code": "600519", "shares": 100, "cost": 8.0}]}', encoding="utf-8")
-    monkeypatch.setattr(pf, "_OLD_PF_FILE", str(old))
-    monkeypatch.setattr(pf, "CACHE_DIR", str(tmp_path / "userdata"))
-    monkeypatch.setattr(pf, "PF_FILE", str(tmp_path / "userdata" / "portfolio.json"))
-    pf._migrate_legacy()
+def test_portfolio_json_is_imported_once_into_shared_sqlite(tmp_path, monkeypatch):
+    legacy = tmp_path / "portfolio.json"
+    legacy.write_text('{"holdings": [{"code": "600519", "shares": 100, "cost": 8.0}]}', encoding="utf-8")
+    monkeypatch.setattr(pf, "PF_FILE", str(legacy))
+
     assert pf._load()["holdings"][0]["code"] == "600519"
-    # 新位置已有数据 → 再跑迁移不覆盖
-    pf._save({"holdings": []})
-    pf._migrate_legacy()
-    assert pf._load()["holdings"] == []
+    legacy.write_text('{"holdings": []}', encoding="utf-8")
+    assert pf._load()["holdings"][0]["code"] == "600519"
 
 
 def test_myreports_legacy_migration(tmp_path, monkeypatch):

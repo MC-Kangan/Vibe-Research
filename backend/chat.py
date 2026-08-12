@@ -109,66 +109,6 @@ def _call_llm(cfg: dict, messages: list, use_tools: bool, tool_defs: list[dict] 
     return r.json()
 
 
-def run_chat(cfg: dict, user_messages: list, context: str, workflow_id: str) -> dict:
-    """跑一轮完整对话（含 function calling 循环）。
-
-    cfg: {baseURL, apiKey, model}
-    user_messages: [{role, content}, ...]
-    返回: {content, trace:[{tool,args}], rounds}
-    """
-    profile = ai_workflows.get_workflow(workflow_id)
-    tool_defs = ai_workflows.tool_definitions(profile)
-    allowed_tools = set(profile.tool_names)
-    messages = [{"role": "system", "content": profile.system_prompt(context)}]
-    messages.extend(user_messages)
-    trace: list[dict] = []
-
-    for rnd in range(1, profile.max_rounds + 1):
-        data = _call_llm(cfg, messages, use_tools=bool(tool_defs), tool_defs=tool_defs)
-        choice = data["choices"][0]["message"]
-        messages.append(choice)
-        tool_calls = choice.get("tool_calls") or []
-        if not tool_calls:
-            return {"content": choice.get("content") or "", "trace": trace, "rounds": rnd}
-
-        for tc in tool_calls:
-            fn = tc["function"]
-            name = fn["name"]
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            if name in allowed_tools:
-                result = tools.exec_tool(name, args)
-                trace.append({"tool": name, "args": args})
-            else:
-                result = {"error": f"工具 {name} 未获当前工作流授权"}
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": json.dumps(result, ensure_ascii=False)[:_TOOL_RESULT_CAP],
-            })
-
-    # 超过最大轮数，最后再要一次不带工具的收尾回答
-    data = _call_llm(cfg, messages, use_tools=False)
-    return {"content": data["choices"][0]["message"].get("content") or "", "trace": trace, "rounds": profile.max_rounds}
-
-
-def run_chat_cli(cfg: dict, user_messages: list, context: str, workflow_id: str) -> dict:
-    """订阅接入：用本机已登录的 CLI 一次性作答（无 function-calling）。
-
-    CLI 不能像 API 那条自己调数据工具，所以数据必须已在 context 里（每日复盘 / 今日要点 /
-    个股页问 AI 等场景，前端已把当页数据塞进 context）。
-    """
-    provider = str(cfg.get("provider", ""))
-    kind = provider[4:] if provider.startswith("cli-") else provider
-    profile = ai_workflows.get_workflow(workflow_id)
-    system = f"{profile.system_prompt(context, tools_available=False)}\n\n{output_language_instruction(cfg)}"
-    user = "\n\n".join(m.get("content", "") for m in user_messages if m.get("content")) or "(no question)"
-    content = cli_runtime.run_cli(kind, system, user)
-    return {"content": content, "trace": [], "rounds": 1}
-
-
 # ---------------------------------------------------------------------------
 # 流式版：yield 事件字典 {type: tool|delta|done|error}，供 /api/chat 以 NDJSON 推给前端
 # ---------------------------------------------------------------------------

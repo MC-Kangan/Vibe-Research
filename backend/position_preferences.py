@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import position_store
 
 
 _LOCK = threading.Lock()
@@ -31,10 +32,7 @@ def _empty() -> dict[str, Any]:
 
 def get() -> dict[str, Any]:
     with _LOCK:
-        try:
-            payload = json.loads(_path().read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return _empty()
+        payload = position_store.load("position-preferences", _path())
     items = payload.get("items") if isinstance(payload, dict) else None
     if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
         return _empty()
@@ -53,10 +51,6 @@ def save(items: list[str]) -> dict[str, Any]:
         "items": normalized,
         "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
-    path = _path()
     with _LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, path)
+        position_store.save("position-preferences", payload, _path())
     return payload

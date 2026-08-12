@@ -15,7 +15,7 @@ test("crypto is a first-class selectable daily-review market", () => {
 
 test("instrument data and debate use explicit asset selection", () => {
   assert.match(detail, /股票.*加密货币/s);
-  assert.match(detail, /api\.marketSnapshot\(c, "crypto"\)/);
+  assert.match(detail, /api\.instrumentOverview\(c, assetType, controller\.signal\)/);
   assert.match(debate, /assetType === "crypto"/);
 });
 

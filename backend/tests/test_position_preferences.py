@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,7 +18,11 @@ def test_preferences_persist_and_normalize(monkeypatch, tmp_path):
 
     assert saved["items"] == ["Preserve capital", "Accept moderate volatility"]
     assert position_preferences.get() == saved
-    on_disk = json.loads((tmp_path / "position-preferences.json").read_text(encoding="utf-8"))
+    with sqlite3.connect(tmp_path / "ibkr-analytics.sqlite3") as database:
+        encoded = database.execute(
+            "SELECT payload_json FROM position_state WHERE state_key = 'position-preferences'"
+        ).fetchone()[0]
+    on_disk = json.loads(encoded)
     assert on_disk == saved
 
 

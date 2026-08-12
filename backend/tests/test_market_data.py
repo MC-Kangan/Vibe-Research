@@ -33,8 +33,10 @@ class FakeHttp:
         self.payload = payload
         self.error = error
         self.status_code = status_code
+        self.calls = 0
 
     def get(self, *args, **kwargs):
+        self.calls += 1
         if self.error:
             raise self.error
         return FakeResponse(self.payload, self.status_code)
@@ -120,6 +122,32 @@ def test_yahoo_snapshot_scales_pence_once_and_preserves_source_value():
     assert snapshot.quote.delay_seconds == 1200
     assert snapshot.quote.market_state == "CLOSED"
     assert snapshot.quote.change_pct == pytest.approx((1.1725 - 1.185) / 1.185 * 100)
+
+
+def test_yahoo_chart_cache_reuses_recent_provider_response():
+    http = FakeHttp(chart_payload())
+    provider = YahooProvider(http)
+
+    first = provider.snapshot("VOD.L")
+    second = provider.snapshot("VOD.L")
+
+    assert first == second
+    assert http.calls == 1
+
+
+def test_yahoo_chart_cache_keeps_last_good_response_during_timeout():
+    http = FakeHttp(chart_payload())
+    provider = YahooProvider(http)
+    first = provider.snapshot("VOD.L")
+    key = ("VOD.L", "5d", "1d")
+    timestamp, item, fetched_at = provider._cache[key]
+    provider._cache[key] = (timestamp - 31, item, fetched_at)
+    http.error = requests.Timeout()
+
+    second = provider.snapshot("VOD.L")
+
+    assert second == first
+    assert http.calls == 2
 
 
 def test_yahoo_bars_scale_prices_skip_missing_timestamp_and_sort():

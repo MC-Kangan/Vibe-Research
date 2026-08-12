@@ -1,9 +1,9 @@
+import { getLocale } from "./locale-state.ts";
+
 export const EUROPEAN_SUFFIXES = [
   ".L", ".DE", ".F", ".AS", ".PA", ".BR", ".MI", ".MC", ".LS", ".SW",
   ".ST", ".CO", ".OL", ".HE", ".VI", ".IR", ".WA", ".PR", ".BD", ".IS",
 ] as const;
-
-export type StockDataRoute = "a-share" | "market" | "global";
 
 export function isAShareSymbol(symbol: string): boolean {
   return /^\d{6}$/.test(symbol.trim());
@@ -38,16 +38,10 @@ export function normalizeCryptoSymbol(symbol: string): string | null {
   return /^[A-Z0-9]{2,12}$/.test(normalized) ? normalized : null;
 }
 
-export function stockDataRoute(symbol: string): StockDataRoute {
-  if (isAShareSymbol(symbol)) return "a-share";
-  if (isEuropeanSymbol(symbol) || isUSSymbol(symbol)) return "market";
-  return "global";
-}
-
 export function formatMarketPrice(value: number | null | undefined, currency: string): string {
   if (value == null || !Number.isFinite(value)) return "—";
   try {
-    return new Intl.NumberFormat("zh-CN", {
+    return new Intl.NumberFormat(getLocale(), {
       style: "currency",
       currency,
       minimumFractionDigits: value >= 100 ? 2 : 4,

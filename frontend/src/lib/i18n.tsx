@@ -1,15 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { storageGet, storageSet } from "@/lib/storage";
+import { getLocale, setCurrentLocale, type Locale } from "@/lib/locale-state";
 
-export type Locale = "en" | "zh-CN";
-
-const LOCALE_KEY = "vr-locale";
-let currentLocale: Locale | undefined;
-
-export function getLocale(): Locale {
-  if (!currentLocale) currentLocale = storageGet(LOCALE_KEY) === "zh-CN" ? "zh-CN" : "en";
-  return currentLocale;
-}
+export { getLocale, type Locale } from "@/lib/locale-state";
 
 export function translate(locale: Locale, english: string, chinese: string): string {
   return locale === "zh-CN" ? chinese : english;
@@ -26,8 +18,7 @@ const LocaleContext = createContext<LocaleContextValue | null>(null);
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(getLocale);
   const setLocale = useCallback((next: Locale) => {
-    currentLocale = next;
-    storageSet(LOCALE_KEY, next);
+    setCurrentLocale(next);
     setLocaleState(next);
   }, []);
   const tr = useCallback((english: string, chinese: string) => translate(getLocale(), english, chinese), []);
