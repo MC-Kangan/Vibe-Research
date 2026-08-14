@@ -32,4 +32,6 @@ test("backtest charts display fills, indicators, equity, and open positions", ()
   assert.match(page, /indicator_series/);
   assert.match(page, /Equity and drawdown/);
   assert.match(page, /open_position/);
+  assert.equal((page.match(/legend: \{ type: "scroll", top: 4/g) || []).length, 3);
+  assert.equal((page.match(/top: 64/g) || []).length, 3);
 });

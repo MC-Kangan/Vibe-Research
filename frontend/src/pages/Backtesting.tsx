@@ -92,10 +92,10 @@ export function Backtesting() {
     const priceIndicators = presentation.indicator_series.filter((item) => item.panel === "price");
     const byDate = (points: Array<{ observed_at: string; value: number }>) => Object.fromEntries(points.map((point) => [point.observed_at.slice(0, 10), point.value]));
     return {
-      tooltip: { trigger: "axis", axisPointer: { type: "cross" } }, legend: { textStyle: { color: "#94a3b8" } },
-      grid: { left: 58, right: 20, top: 42, bottom: 54 }, xAxis: { type: "category", data: dates, axisLabel: { color: "#94a3b8", hideOverlap: true } },
+      tooltip: { trigger: "axis", axisPointer: { type: "cross" } }, legend: { type: "scroll", top: 4, left: 58, right: 20, textStyle: { color: "#94a3b8" } },
+      grid: { left: 58, right: 20, top: 64, bottom: 72, containLabel: true }, xAxis: { type: "category", data: dates, axisLabel: { color: "#94a3b8", hideOverlap: true } },
       yAxis: { scale: true, axisLabel: { color: "#94a3b8" }, splitLine: { lineStyle: { color: "rgba(148,163,184,.12)" } } },
-      dataZoom: [{ type: "inside", start: 20, end: 100 }, { type: "slider", bottom: 8, height: 18 }],
+      dataZoom: [{ type: "inside", start: 20, end: 100 }, { type: "slider", bottom: 4, height: 18 }],
       series: [
         { name: tr("Price", "价格"), type: "candlestick", data: presentation.price_bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]), itemStyle: { color: "#22c55e", color0: "#ef4444", borderColor: "#22c55e", borderColor0: "#ef4444" }, markPoint: { data: markData } },
         ...priceIndicators.map((item, index) => { const values = byDate(item.points); return { name: item.label, type: "line", showSymbol: false, data: dates.map((date) => values[date] ?? null), lineStyle: { width: 1.5, color: ["#60a5fa", "#f59e0b", "#c084fc"][index % 3] } }; }),
@@ -108,7 +108,7 @@ export function Backtesting() {
     const items = presentation.indicator_series.filter((item) => item.panel !== "price");
     const dates = presentation.price_bars.map((bar) => bar.observed_at.slice(0, 10));
     return {
-      tooltip: { trigger: "axis" }, legend: { textStyle: { color: "#94a3b8" } }, grid: { left: 58, right: 20, top: 38, bottom: 36 },
+      tooltip: { trigger: "axis" }, legend: { type: "scroll", top: 4, left: 58, right: 20, textStyle: { color: "#94a3b8" } }, grid: { left: 58, right: 20, top: 64, bottom: 48, containLabel: true },
       xAxis: { type: "category", data: dates, axisLabel: { color: "#94a3b8", hideOverlap: true } },
       yAxis: { scale: true, axisLabel: { color: "#94a3b8" }, splitLine: { lineStyle: { color: "rgba(148,163,184,.12)" } } },
       series: items.map((item, index) => { const values = Object.fromEntries(item.points.map((point) => [point.observed_at.slice(0, 10), point.value])); return { name: item.label, type: item.panel === "regime" ? "bar" : "line", showSymbol: false, data: dates.map((date) => values[date] ?? null), lineStyle: { color: ["#c084fc", "#f59e0b", "#60a5fa"][index % 3] }, itemStyle: { color: "#64748b" } }; }),
@@ -116,7 +116,7 @@ export function Backtesting() {
   }, [presentation]);
 
   const equityOption = useMemo(() => presentation ? {
-    tooltip: { trigger: "axis" }, legend: { textStyle: { color: "#94a3b8" } }, grid: { left: 64, right: 64, top: 38, bottom: 36 },
+    tooltip: { trigger: "axis" }, legend: { type: "scroll", top: 4, left: 64, right: 64, textStyle: { color: "#94a3b8" } }, grid: { left: 64, right: 64, top: 64, bottom: 48, containLabel: true },
     xAxis: { type: "category", data: presentation.curve.map((point) => point.observed_at.slice(0, 10)), axisLabel: { color: "#94a3b8", hideOverlap: true } },
     yAxis: [{ scale: true, axisLabel: { color: "#94a3b8" } }, { min: 0, max: 1, inverse: true, axisLabel: { color: "#94a3b8", formatter: (value: number) => `${(value * 100).toFixed(0)}%` } }],
     series: [{ name: tr("Equity", "权益"), type: "line", showSymbol: false, data: presentation.curve.map((point) => point.equity), lineStyle: { color: "#22c55e", width: 2 } }, { name: tr("Drawdown", "回撤"), type: "line", yAxisIndex: 1, showSymbol: false, areaStyle: { opacity: .12 }, data: presentation.curve.map((point) => point.drawdown), lineStyle: { color: "#ef4444" } }],
