@@ -314,6 +314,11 @@ shape. A current query needs `OpenPosition`; historical analytics need
 
 ### Option B: Docker Compose
 
+For a UGREEN NAS without Compose terminal access, use the dedicated
+[Mac-build and UGOS Docker Project guide](docs/nas-full-stack-deployment.md).
+It cross-builds `linux/amd64` images on the Mac, exports one image tar, and uses
+an image-only Project on the NAS; no NAS-side source build is required.
+
 Create a Git-ignored `.env` beside `compose.yaml` with the same
 `VR_IBKR_FLEX_*` values, then run:
 

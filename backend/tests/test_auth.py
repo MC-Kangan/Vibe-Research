@@ -38,8 +38,13 @@ def test_password_hash_round_trip_and_legacy_compatibility():
 
 
 def test_new_password_creation_rejects_short_passwords():
-    with pytest.raises(ValueError, match="15"):
-        auth.hash_password("too-short")
+    with pytest.raises(ValueError, match="8"):
+        auth.hash_password("short7")
+
+
+def test_new_password_creation_accepts_eight_characters():
+    encoded = auth.hash_password("eight888")
+    assert auth.verify_password("eight888", encoded)
 
 
 def test_login_session_protects_api_and_logout_revokes(monkeypatch, tmp_path):

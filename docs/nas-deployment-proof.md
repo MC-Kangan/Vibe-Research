@@ -106,8 +106,8 @@ Generate the first-run hash after building the backend image:
 docker compose run --rm backend python auth.py hash-password
 ```
 
-Use a password-manager-generated password of at least 15 characters, then paste the
-complete output between the single quotes above. The username and hash seed
+Passwords must contain at least 8 characters; prefer a longer, random password when
+practical. Paste the complete output between the single quotes above. The username and hash seed
 `/data/auth.sqlite3` only when it contains no user; subsequent password changes must use
 the reset command below. Keep `VR_BIND_ADDRESS=127.0.0.1` until the authenticated
 Tailscale proxy is installed. Do not open router ports, use a DMZ rule, expose port 8900,

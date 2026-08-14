@@ -162,8 +162,8 @@ def _argon2_hash(password: str) -> str:
 
 def hash_password(password: str) -> str:
     """Create an Argon2id password hash for first-run bootstrap or reset."""
-    if not 15 <= len(password) <= 1024:
-        raise ValueError("new passwords must contain between 15 and 1024 characters")
+    if not 8 <= len(password) <= 1024:
+        raise ValueError("new passwords must contain between 8 and 1024 characters")
     return _argon2_hash(password)
 
 

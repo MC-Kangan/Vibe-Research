@@ -1,0 +1,164 @@
+name: vibe-research-nas
+
+services:
+  tailscale:
+    image: ${TAILSCALE_IMAGE:-tailscale/tailscale:latest}
+    platform: linux/amd64
+    hostname: ${TS_HOSTNAME:-vibe-research}
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_AUTH_ONCE: "true"
+      TS_HOSTNAME: ${TS_HOSTNAME:-vibe-research}
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale:/config:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  frontend:
+    image: ${VIBE_FRONTEND_IMAGE:-vibe-research-frontend:nas-amd64}
+    platform: linux/amd64
+    restart: unless-stopped
+    network_mode: service:tailscale
+    depends_on:
+      tailscale:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
+
+  backend:
+    image: ${VIBE_BACKEND_IMAGE:-vibe-research-backend:nas-amd64}
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      research-api:
+        condition: service_healthy
+    environment:
+      PYTHONUNBUFFERED: "1"
+      VR_DATA_DIR: /data
+      VR_REPORTS_DIR: /data/myreports
+      VR_ALLOW_ORIGINS: ${VR_PUBLIC_ORIGIN:?Set the exact Tailscale HTTPS origin in .env.nas}
+      VR_API_KEY: ${VR_API_KEY:-}
+      VR_AUTH_ENABLED: "true"
+      VR_AUTH_DB_PATH: /data/auth.sqlite3
+      VR_AUTH_USERNAME: ${VR_AUTH_USERNAME:?Set the login username in .env.nas}
+      VR_AUTH_PASSWORD_HASH: ${VR_AUTH_PASSWORD_HASH:?Generate the Argon2id hash described in the NAS guide}
+      VR_SESSION_TTL_HOURS: ${VR_SESSION_TTL_HOURS:-12}
+      VR_AUTH_COOKIE_SECURE: "true"
+      VR_TRADE_RESEARCH_ENABLED: "true"
+      VR_TRADE_RESEARCH_BASE_URL: http://research-api:8000
+      VR_TRADE_RESEARCH_API_TOKEN_FILE: /run/secrets/trade-research-token
+      VR_TRADE_RESEARCH_TIMEOUT_SECONDS: ${VR_TRADE_RESEARCH_TIMEOUT_SECONDS:-30}
+      VR_FINNHUB_API_KEY: ${VR_FINNHUB_API_KEY:-}
+      VR_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:?Set an SEC user agent containing your real contact email}
+      VR_COINGECKO_API_KEY: ${VR_COINGECKO_API_KEY:-}
+      VR_COINGECKO_API_TIER: ${VR_COINGECKO_API_TIER:-demo}
+      VR_COINBASE_API_KEY_NAME: ${VR_COINBASE_API_KEY_NAME:-}
+      VR_COINBASE_API_PRIVATE_KEY: ${VR_COINBASE_API_PRIVATE_KEY:-}
+      VR_COINBASE_API_ALGORITHM: ${VR_COINBASE_API_ALGORITHM:-ES256}
+      VR_IBKR_FLEX_TOKEN: ${VR_IBKR_FLEX_TOKEN:-}
+      VR_IBKR_FLEX_QUERY_ID: ${VR_IBKR_FLEX_QUERY_ID:-}
+      VR_IBKR_FLEX_HISTORY_QUERY_ID: ${VR_IBKR_FLEX_HISTORY_QUERY_ID:-}
+      VR_IBKR_FLEX_BASE_URL: ${VR_IBKR_FLEX_BASE_URL:-https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService}
+      VR_IBKR_FLEX_TIMEZONE: ${VR_IBKR_FLEX_TIMEZONE:-Europe/London}
+      VR_IBKR_FLEX_COOLDOWN_SECONDS: ${VR_IBKR_FLEX_COOLDOWN_SECONDS:-300}
+      VR_IBKR_FLEX_TIMEOUT_SECONDS: ${VR_IBKR_FLEX_TIMEOUT_SECONDS:-20}
+      VR_IBKR_FLEX_REQUEST_RETRIES: ${VR_IBKR_FLEX_REQUEST_RETRIES:-1}
+      VR_IBKR_FLEX_RETRIES: ${VR_IBKR_FLEX_RETRIES:-3}
+      VR_IBKR_FLEX_RETRY_DELAY_SECONDS: ${VR_IBKR_FLEX_RETRY_DELAY_SECONDS:-5}
+      VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS: ${VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS:-5}
+      VR_IBKR_POSITION_STORE: /data/ibkr-positions.json
+      VR_IBKR_ANALYTICS_STORE: /data/ibkr-analytics.sqlite3
+    secrets:
+      - trade-research-token
+    volumes:
+      - vibe-data:/data
+    expose:
+      - "8900"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/api/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    mem_limit: 2g
+    security_opt:
+      - no-new-privileges:true
+
+  research-api:
+    image: ${TRADE_RESEARCH_IMAGE:-trade-research:nas-amd64}
+    platform: linux/amd64
+    command: ["trade-research", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    read_only: true
+    init: true
+    restart: unless-stopped
+    environment: &trade-research-environment
+      TRADE_RESEARCH_API_TOKEN_FILE: /run/secrets/trade-research-token
+      TRADE_RESEARCH_CONTAINER_INTERNAL_BIND: compose-internal-v1
+      TRADE_RESEARCH_DATA_DIR: /var/lib/trade-research
+      TRADE_RESEARCH_DATA_ROOT: /var/lib/trade-research
+      TRADE_RESEARCH_PRICE_PROVIDER: ${TRADE_RESEARCH_PRICE_PROVIDER:-yahoo}
+      TRADE_RESEARCH_FUNDAMENTAL_PROVIDER: ${TRADE_RESEARCH_FUNDAMENTAL_PROVIDER:-sec_company_facts}
+      TRADE_RESEARCH_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:?Set an SEC user agent containing your real contact email}
+      TRADE_RESEARCH_CCXT_EXCHANGE: ${TRADE_RESEARCH_CCXT_EXCHANGE:-}
+    secrets:
+      - trade-research-token
+    tmpfs:
+      - /tmp
+    volumes:
+      - trade-research-data:/var/lib/trade-research
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=5).close()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  research-worker:
+    image: ${TRADE_RESEARCH_IMAGE:-trade-research:nas-amd64}
+    platform: linux/amd64
+    command: ["trade-research", "worker"]
+    read_only: true
+    init: true
+    restart: unless-stopped
+    depends_on:
+      research-api:
+        condition: service_healthy
+    environment:
+      <<: *trade-research-environment
+      TRADE_RESEARCH_API_TOKEN_FILE: ""
+    tmpfs:
+      - /tmp
+    volumes:
+      - trade-research-data:/var/lib/trade-research
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  tailscale-state:
+  vibe-data:
+  trade-research-data:
+
+secrets:
+  trade-research-token:
+    file: ${TRADE_RESEARCH_TOKEN_FILE:-./deploy/secrets/trade-research-token}

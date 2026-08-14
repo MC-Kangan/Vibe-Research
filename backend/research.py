@@ -70,7 +70,7 @@ def configured() -> bool:
         os.environ.get("VR_TRADE_RESEARCH_ENABLED", "false").strip().lower()
         in {"1", "true", "yes", "on"}
         and bool(os.environ.get("VR_TRADE_RESEARCH_BASE_URL", "").strip())
-        and bool(os.environ.get("VR_TRADE_RESEARCH_API_TOKEN", "").strip())
+        and bool(_api_token())
     )
 
 
@@ -78,10 +78,20 @@ def _base_url() -> str:
     return os.environ.get("VR_TRADE_RESEARCH_BASE_URL", "").strip().rstrip("/")
 
 
+def _api_token() -> str:
+    token_file = os.environ.get("VR_TRADE_RESEARCH_API_TOKEN_FILE", "").strip()
+    if token_file:
+        try:
+            with open(token_file, encoding="utf-8") as stream:
+                token = stream.read(4097)
+        except (OSError, UnicodeError):
+            return ""
+        return token.strip() if 0 < len(token) <= 4096 else ""
+    return os.environ.get("VR_TRADE_RESEARCH_API_TOKEN", "").strip()
+
+
 def _headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {os.environ.get('VR_TRADE_RESEARCH_API_TOKEN', '').strip()}"
-    }
+    return {"Authorization": f"Bearer {_api_token()}"}
 
 
 def _timeout() -> float:

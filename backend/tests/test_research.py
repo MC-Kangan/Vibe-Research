@@ -8,6 +8,33 @@ from api import research_routes
 client = TestClient(app_module.app)
 
 
+def test_research_reads_shared_token_from_secret_file(monkeypatch, tmp_path):
+    token_file = tmp_path / "trade-research-token"
+    token_file.write_text("file-backed-token\n", encoding="utf-8")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "true")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_BASE_URL", "http://research-api:8000")
+    monkeypatch.delenv("VR_TRADE_RESEARCH_API_TOKEN", raising=False)
+    monkeypatch.setenv("VR_TRADE_RESEARCH_API_TOKEN_FILE", str(token_file))
+
+    layer = research_routes.research_layer
+    assert layer.configured() is True
+    assert layer._headers() == {"Authorization": "Bearer file-backed-token"}
+
+
+def test_research_rejects_empty_or_oversized_token_file(monkeypatch, tmp_path):
+    token_file = tmp_path / "trade-research-token"
+    monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "true")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_BASE_URL", "http://research-api:8000")
+    monkeypatch.delenv("VR_TRADE_RESEARCH_API_TOKEN", raising=False)
+    monkeypatch.setenv("VR_TRADE_RESEARCH_API_TOKEN_FILE", str(token_file))
+    layer = research_routes.research_layer
+
+    token_file.write_text("\n", encoding="utf-8")
+    assert layer.configured() is False
+    token_file.write_text("x" * 4097, encoding="utf-8")
+    assert layer.configured() is False
+
+
 def test_research_disabled_is_non_breaking(monkeypatch):
     monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "false")
     response = client.get("/api/research/skills")

@@ -1,0 +1,14 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+
+  backend:
+    build:
+      context: ./backend
+
+  research-api:
+    build:
+      context: ${TRADE_AGENT_PATH:-../TradeAgent}
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:?Set a reviewed digest-pinned Python base image}

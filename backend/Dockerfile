@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
 COPY market_data/ ./market_data/
+COPY api/ ./api/
 COPY news_sources.json ./
 
 RUN groupadd --gid 10001 vibe \

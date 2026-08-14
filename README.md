@@ -296,6 +296,11 @@ export VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS='5'
 
 ### 方式 B：Docker Compose（NAS / 长期运行）
 
+完整的 UGREEN NAS 私有部署（Vibe Research + TradeAgent API/worker + 自动 Tailscale
+Serve HTTPS）会在 Mac 上交叉构建 `linux/amd64` 镜像，再由 UGOS Docker App 导入镜像
+并创建 Project；NAS 不需要命令行构建或运行 Compose。请按
+[`docs/nas-full-stack-deployment.md`](docs/nas-full-stack-deployment.md) 从头部署。
+
 安装并启动 Docker Desktop（或 NAS 上的 Docker Engine）后，在仓库根目录创建 `.env`。不要把 token 放进前端变量或提交到 Git：
 
 ```env
