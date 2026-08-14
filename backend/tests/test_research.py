@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 
 import app as app_module
 from api import research_routes
@@ -53,6 +54,124 @@ def test_research_rejects_unknown_skill(monkeypatch):
         "/api/research/run", json={"symbol": "AAPL", "skills": ["unknown-skill"]}
     )
     assert response.status_code == 422
+
+
+def test_generic_research_rejects_backtesting(monkeypatch):
+    monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "true")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_BASE_URL", "http://research")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/api/research/run", json={"symbol": "AAPL", "skills": ["backtesting"]}
+    )
+
+    assert response.status_code == 422
+
+
+def test_backtest_endpoint_forwards_typed_playground_request(monkeypatch):
+    monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "true")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_BASE_URL", "http://research")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_API_TOKEN", "test-token")
+    calls = []
+    monkeypatch.setattr(
+        research_routes.research_layer,
+        "run_backtest",
+        lambda **kwargs: calls.append(kwargs) or {
+            "symbol": "AAPL", "market": "US", "asset_type": "equity",
+            "currency": "USD",
+            "available_start_date": "2025-01-01",
+            "available_end_date": "2026-01-01",
+            "result": {"analyst": "backtesting", "status": "complete"},
+        },
+    )
+
+    response = client.post(
+        "/api/research/backtest",
+        json={
+            "symbol": "AAPL",
+            "asset_type": "equity",
+            "start_date": "2025-08-01",
+            "initial_cash": 1000,
+            "minimum_holding_days": 2,
+            "strategy": {
+                "kind": "sma_crossover", "fast_window": 10, "slow_window": 30,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls[0]["minimum_holding_bars"] == 2
+    assert calls[0]["strategy"] == {
+        "kind": "sma_crossover", "fast_window": 10, "slow_window": 30,
+    }
+    assert response.json()["result"]["analyst"] == "backtesting"
+
+
+def test_backtest_endpoint_validates_strategy_parameters(monkeypatch):
+    monkeypatch.setenv("VR_TRADE_RESEARCH_ENABLED", "true")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_BASE_URL", "http://research")
+    monkeypatch.setenv("VR_TRADE_RESEARCH_API_TOKEN", "test-token")
+
+    response = client.post(
+        "/api/research/backtest",
+        json={
+            "symbol": "AAPL",
+            "start_date": "2025-08-01",
+            "minimum_holding_days": 0,
+            "strategy": {
+                "kind": "sma_crossover", "fast_window": 50, "slow_window": 20,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_backtest_bridge_filters_current_bar_and_sends_one_tradeagent_run(monkeypatch):
+    layer = research_routes.research_layer
+    monkeypatch.setattr(layer, "configured", lambda: True)
+    monkeypatch.setattr(layer, "list_skills", lambda: [{
+        "name": "backtesting", "supported_asset_types": ["equity"], "available": True,
+    }])
+    monkeypatch.setattr(layer, "_resolve_target", lambda *_args: ("AAPL", "US"))
+    monkeypatch.setattr(layer, "_load_series", lambda *_args: {
+        "instrument": {"symbol": "AAPL", "market": "US"},
+        "source": "fixture",
+        "bars": [
+            {"observed_at": "2025-01-01T00:00:00Z", "open": 100, "high": 101, "low": 99, "close": 100, "volume": 10},
+            {"observed_at": "2025-06-01T00:00:00Z", "open": 101, "high": 102, "low": 100, "close": 101, "volume": 11},
+        ],
+    })
+    calls = []
+    monkeypatch.setattr(layer, "run_analysis", lambda **kwargs: calls.append(kwargs) or {
+        "results": [{"analyst": "backtesting", "status": "complete"}],
+    })
+
+    result = layer.run_backtest(
+        symbol="AAPL", asset_type="equity", start_date="2025-06-01",
+        strategy={"kind": "sma_crossover", "fast_window": 2, "slow_window": 3},
+    )
+
+    assert result["market"] == "US"
+    assert result["currency"] == "USD"
+    assert calls[0]["skills"] == ["backtesting"]
+    assert calls[0]["skill_parameters"]["backtesting"]["cash"] == 1000
+    assert len(calls[0]["price_series"][0]["bars"]) == 2
+
+
+def test_backtest_bridge_rejects_non_usd_markets_before_loading_prices(monkeypatch):
+    layer = research_routes.research_layer
+    monkeypatch.setattr(layer, "configured", lambda: True)
+    monkeypatch.setattr(layer, "list_skills", lambda: [{
+        "name": "backtesting", "supported_asset_types": ["equity"], "available": True,
+    }])
+    monkeypatch.setattr(layer, "_resolve_target", lambda *_args: ("VOD.L", "EU"))
+
+    with pytest.raises(layer.BacktestInputError, match="USD-quoted"):
+        layer.run_backtest(
+            symbol="VOD.L", asset_type="equity", start_date="2025-06-01",
+            strategy={"kind": "sma_crossover", "fast_window": 2, "slow_window": 3},
+        )
 
 
 def test_research_accepts_sec_backed_equity_skills(monkeypatch):

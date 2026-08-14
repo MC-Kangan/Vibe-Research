@@ -262,7 +262,10 @@ bridge. Crypto daily bars come from Coinbase and retain fractional volume.
 | `technical-basic` | Yes | Yes | EMA, ADX/DMI, RSI, Bollinger Bands, OBV, and volume confirmation; complete OHLCV required |
 | `risk-analysis` | Yes | Yes | Volatility, downside deviation, drawdown, historical VaR/CVaR, and return shape |
 | `volatility-regime` | Yes | Yes | 20-day realized volatility, historical percentile, and expansion/contraction state |
+| `backtesting` | Yes | Yes | Daily long/flat SMA, MACD, RSI, and Markov tests with fills, equity curves, and metrics |
 
+The dedicated `/backtesting` playground owns backtest controls and charts; the
+skill is intentionally absent from the generic instrument-page skill picker.
 Skill cards, tables, chart axes, and tooltips display two decimal places. The
 collapsible Raw JSON keeps original precision for auditing. Missing fields or
 insufficient history remain explicit TradeAgent partial results; Vibe does not

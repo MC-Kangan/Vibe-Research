@@ -25,15 +25,17 @@ ALLOWED_SKILLS = {
     "volatility-regime",
     "correlation-analysis",
     "asset-allocation",
+    "backtesting",
 }
 PORTFOLIO_SKILLS = {"correlation-analysis", "asset-allocation"}
-INSTRUMENT_SKILLS = ALLOWED_SKILLS - PORTFOLIO_SKILLS
+INSTRUMENT_SKILLS = ALLOWED_SKILLS - PORTFOLIO_SKILLS - {"backtesting"}
 PRICE_SERIES_SKILLS = {
     "worth-buy-stocks",
     "markov-method",
     "technical-basic",
     "risk-analysis",
     "volatility-regime",
+    "backtesting",
 }
 DEFAULT_SKILL_ASSET_TYPES = {
     "fundamental": ("equity",),
@@ -45,6 +47,7 @@ DEFAULT_SKILL_ASSET_TYPES = {
     "volatility-regime": ("equity", "crypto"),
     "correlation-analysis": ("equity", "crypto"),
     "asset-allocation": ("equity", "crypto"),
+    "backtesting": ("equity", "crypto"),
 }
 _A_SHARE_BENCHMARKS = {"CSI300": ("000300", "SSE"), "CSI500": ("000905", "SSE")}
 _EU_INDEXES = {"SXXP": ("^STOXX", "INDEX"), "SX5E": ("^STOXX50E", "INDEX")}
@@ -56,6 +59,10 @@ class ResearchClientError(RuntimeError):
 
 class UnsupportedSkillAssetError(ResearchClientError):
     """Selected skills cannot operate on the requested asset type."""
+
+
+class BacktestInputError(ResearchClientError):
+    """The requested backtest cannot be evaluated against available bars."""
 
 
 def configured() -> bool:
@@ -327,6 +334,75 @@ def run_portfolio_analysis(
             {"symbol": symbol, "market": market, "asset_type": asset_type}
             for symbol, market, asset_type in resolved
         ],
+    }
+
+
+def run_backtest(
+    *,
+    symbol: str,
+    asset_type: str,
+    start_date: str,
+    strategy: dict[str, Any],
+    initial_cash: float = 1_000,
+    minimum_holding_bars: int = 1,
+    commission: float = 0.001,
+    spread: float = 0,
+    position_size: float = 0.95,
+) -> dict[str, Any]:
+    """Run the dedicated daily playground flow through TradeAgent once."""
+    if not configured():
+        raise ResearchClientError("TradeAgent is not configured")
+    catalog = list_skills()
+    validate_skill_support(["backtesting"], asset_type, catalog)
+    target_symbol, market = _resolve_target(symbol, asset_type)
+    if market not in {"US", "CRYPTO"}:
+        raise BacktestInputError(
+            "Backtesting currently supports USD-quoted US stocks and crypto only."
+        )
+    series = _load_series(target_symbol, market)
+    today = datetime.now(timezone.utc).date()
+    completed = [
+        bar for bar in series["bars"]
+        if datetime.fromisoformat(str(bar["observed_at"]).replace("Z", "+00:00")).date() < today
+    ]
+    if not completed:
+        raise BacktestInputError("No completed daily bars are available")
+    requested = datetime.fromisoformat(start_date).date()
+    first = datetime.fromisoformat(completed[0]["observed_at"].replace("Z", "+00:00")).date()
+    last = datetime.fromisoformat(completed[-1]["observed_at"].replace("Z", "+00:00")).date()
+    if requested < first or requested > last:
+        raise BacktestInputError(
+            f"Start date must be between {first.isoformat()} and {last.isoformat()}"
+        )
+    price_series = [{**series, "bars": completed}]
+    report = run_analysis(
+        skills=["backtesting"],
+        symbol=target_symbol,
+        market=market,
+        skill_parameters={
+            "backtesting": {
+                "start_date": start_date,
+                "minimum_holding_bars": minimum_holding_bars,
+                "cash": initial_cash,
+                "commission": commission,
+                "spread": spread,
+                "position_size": position_size,
+                "strategy": strategy,
+            }
+        },
+        price_series=price_series,
+    )
+    results = report.get("results")
+    if not isinstance(results, list) or not results:
+        raise ResearchClientError("TradeAgent returned an invalid backtest report")
+    return {
+        "symbol": target_symbol,
+        "market": market,
+        "asset_type": asset_type,
+        "currency": "USD",
+        "available_start_date": first.isoformat(),
+        "available_end_date": last.isoformat(),
+        "result": results[0],
     }
 
 

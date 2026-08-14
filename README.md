@@ -263,8 +263,9 @@ Vibe 只负责标的选择、行情归一化、AI 入口和报告展示；确定
 | `technical-basic` | ✓ | ✓ | EMA、ADX/DMI、RSI、布林带、OBV 与量能确认；要求完整 OHLCV |
 | `risk-analysis` | ✓ | ✓ | 波动率、下行偏差、最大回撤、历史 VaR/CVaR 与收益分布形状 |
 | `volatility-regime` | ✓ | ✓ | 20 日实现波动率、历史百分位与扩张 / 收缩状态 |
+| `backtesting` | ✓ | ✓ | 日线 long/flat SMA、MACD、RSI 与 Markov 回测、交易点、权益曲线和绩效指标 |
 
-技能卡片、表格、图表坐标和 tooltip 统一显示两位小数；折叠的 Raw JSON 保留原始精度，便于审计。若数据字段或历史长度不足，界面会展示 TradeAgent 返回的 partial 状态，不会静默伪造结果。
+`/backtesting` 回测实验室提供独立的参数与图表界面；该技能不会出现在标的数据页的通用技能选择器中。技能卡片、表格、图表坐标和 tooltip 统一显示两位小数；折叠的 Raw JSON 保留原始精度，便于审计。若数据字段或历史长度不足，界面会展示 TradeAgent 返回的 partial 状态，不会静默伪造结果。
 
 要在本地运行时使用真实持仓，可在仓库根目录创建被 Git 忽略的 `.env.local`（推荐，优先于 `.env`）：
 

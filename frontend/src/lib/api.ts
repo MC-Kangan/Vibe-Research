@@ -17,6 +17,7 @@ const API_ERROR_MESSAGES: Record<string, [string, string]> = {
   tradeagent_not_configured: ["TradeAgent is not configured.", "TradeAgent 尚未配置。"],
   research_asset_unsupported: ["The selected skills do not support this asset type.", "所选技能不支持该资产类型。"],
   tradeagent_request_failed: ["TradeAgent could not complete the research request.", "TradeAgent 无法完成本次研究请求。"],
+  backtest_input_invalid: ["The backtest date or available history is invalid.", "回测日期或可用历史数据无效。"],
   portfolio_instruments_duplicate: ["Portfolio instruments must be unique.", "组合标的不可重复。"],
   holding_quantity_invalid: ["Holding quantity must be greater than zero.", "持仓数量必须大于零。"],
   manual_holding_not_found: ["The manual stock holding was not found.", "未找到该手工股票持仓。"],
@@ -31,6 +32,9 @@ const API_ERROR_MESSAGES: Record<string, [string, string]> = {
 
 function errorMessage(payload: any, fallback: string): string {
   const messages = API_ERROR_MESSAGES[String(payload?.code || "")];
+  if (payload?.code === "backtest_input_invalid" && payload?.detail) {
+    return String(payload.detail);
+  }
   return messages ? translate(getLocale(), messages[0], messages[1]) : String(payload?.detail || fallback);
 }
 
@@ -104,6 +108,66 @@ export interface ResearchRunResponse {
   symbol: string;
   market: string;
   results: ResearchRunResult[];
+}
+
+export type BacktestStrategy =
+  | { kind: "sma_crossover"; fast_window: number; slow_window: number }
+  | { kind: "macd_crossover"; fast_window: number; slow_window: number; signal_window: number }
+  | { kind: "rsi_mean_reversion"; window: number; entry_threshold: number; exit_threshold: number }
+  | { kind: "markov_regime"; window: number; bull_threshold: number; bear_threshold: number; min_train: number };
+
+export interface BacktestRunRequest {
+  symbol: string;
+  asset_type: "equity" | "crypto";
+  start_date: string;
+  strategy: BacktestStrategy;
+  initial_cash: number;
+  minimum_holding_days: number;
+  commission: number;
+  spread: number;
+  position_size: number;
+}
+
+export interface BacktestBar {
+  observed_at: string; open: number; high: number; low: number; close: number; volume: number;
+}
+export interface BacktestIndicatorSeries {
+  key: string; label: string; panel: "price" | "oscillator" | "regime";
+  points: Array<{ observed_at: string; value: number }>;
+}
+export interface BacktestTrade {
+  entry_at: string; exit_at: string; size: number; entry_price: number; exit_price: number;
+  pnl: number; return_ratio: number; duration_bars: number;
+}
+export interface BacktestOpenPosition {
+  entry_at: string; size: number; entry_price: number; current_price: number;
+  unrealized_pnl: number; return_ratio: number; duration_bars: number;
+}
+export interface BacktestPresentation {
+  template: "backtesting-v1";
+  engine: string; engine_version: string; strategy_kind: BacktestStrategy["kind"];
+  strategy_name: string;
+  assumptions: {
+    start_date: string | null; minimum_holding_bars: number; cash: number;
+    commission: number; spread: number; position_size: number;
+    strategy_parameters: Array<{ key: string; value: number }>;
+  };
+  price_bars: BacktestBar[];
+  indicator_series: BacktestIndicatorSeries[];
+  curve: Array<{ observed_at: string; equity: number; drawdown: number }>;
+  trades: BacktestTrade[];
+  open_position: BacktestOpenPosition | null;
+}
+export interface BacktestResponse {
+  symbol: string; market: string; asset_type: "equity" | "crypto";
+  currency: "USD";
+  available_start_date: string; available_end_date: string;
+  result: {
+    analyst: "backtesting"; status: "complete" | "partial" | "failed"; summary: string;
+    limitations?: string[];
+    observations?: Array<{ metric: string; value: number }>;
+    presentation?: BacktestPresentation | null;
+  };
 }
 
 export interface PortfolioResearchCandidate {
@@ -714,6 +778,8 @@ export const api = {
     request<ResearchSkillDefaults>("/research/skill-defaults", "PUT", { asset_type: assetType, skills }),
   runResearch: (symbol: string, skills: string[], skillParameters: Record<string, Record<string, unknown>> = {}, assetType: "equity" | "crypto" = "equity") =>
     request<ResearchRunResponse>("/research/run", "POST", { symbol, skills, skill_parameters: skillParameters, asset_type: assetType }),
+  runBacktest: (payload: BacktestRunRequest) =>
+    request<BacktestResponse>("/research/backtest", "POST", payload),
   extractResearchContexts: (files: Array<{ name: string; content_b64: string }>) =>
     request<ExtractedResearchContext[]>("/research-context/extract", "POST", { files, locale: getLocale() }),
   uploadReport: (name: string, contentB64: string) =>
