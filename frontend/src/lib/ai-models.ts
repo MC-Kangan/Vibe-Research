@@ -2,9 +2,11 @@
 // 两类：
 //   订阅版（provider "cli-*"）= 调本机已登录的 CLI，用订阅额度、免 API key（仅本地自托管可用）。
 //   API 版 = 填自己的 key，走 OpenAI 兼容 /chat/completions。
-// key 一律只存本地浏览器、随请求发给你自己的后端；不上传、不进仓库。
+// Browser API keys stay in local storage and are sent only to your backend.
+// A NAS may alternatively use the server-side VR_LLM_* configuration.
 
 export type ProviderId =
+  | "server"
   | "deepseek"
   | "silicon"
   | "openai"
@@ -32,6 +34,7 @@ export interface ModelConfig {
 }
 
 export const isCliProvider = (p: ProviderId): boolean => p.startsWith("cli-");
+export const isServerProvider = (p: ProviderId): boolean => p === "server";
 
 // 各 API provider 的默认接口地址（OpenAI 兼容）。选中即自动填 baseURL，用户只需填 key。
 export const PROVIDER_BASE: Partial<Record<ProviderId, string>> = {

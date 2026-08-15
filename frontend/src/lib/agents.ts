@@ -3,6 +3,7 @@
 
 import { ApiError } from "@/lib/api";
 import { apiCredentialsAllowedOnOrigin, loadLlm } from "@/lib/llm";
+import { isServerProvider } from "@/lib/ai-models";
 import { streamNdjson, type NdjsonEvent } from "@/lib/ndjson";
 import { getLocale, translate } from "@/lib/i18n";
 
@@ -24,7 +25,7 @@ export interface DebateHandlers {
 function requireLlm() {
   const llm = loadLlm();
   if (!llm) throw new ApiError(translate(getLocale(), "AI is not configured. Open AI Setup first.", "尚未接入 AI，请先在「接入 AI」里配置"), 400);
-  if (!llm.provider.startsWith("cli-") && !apiCredentialsAllowedOnOrigin()) {
+  if (!llm.provider.startsWith("cli-") && !isServerProvider(llm.provider) && !apiCredentialsAllowedOnOrigin()) {
     throw new ApiError(translate(
       getLocale(),
       "API mode requires HTTPS on a LAN address because your model key would otherwise cross the network unencrypted. Use HTTPS or local CLI mode.",

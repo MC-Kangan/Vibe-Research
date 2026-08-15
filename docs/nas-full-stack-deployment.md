@@ -48,11 +48,26 @@ Do not leave any `REPLACE_WITH` values.
 
 ## 2. Configure Tailscale
 
-In the Tailscale admin console:
+The Tailscale settings window on your Mac is the **client** configuration. It is not where
+the first three deployment settings are created. Open the web admin console instead:
 
-1. Enable MagicDNS and HTTPS certificates.
-2. Create a pre-authorized, non-ephemeral auth key for this NAS node.
-3. Keep Funnel disabled. Do not configure subnet routes or an exit node for this app.
+- [DNS settings](https://login.tailscale.com/admin/dns)
+- [Auth keys](https://login.tailscale.com/admin/keys)
+
+Complete these three steps in the web console:
+
+1. On **DNS**, enable **MagicDNS** if it is not already enabled. This creates names such
+   as `vibe-research.<your-tailnet>.ts.net` for devices in your tailnet.
+2. On the same **DNS** page, under **HTTPS Certificates**, select **Enable HTTPS** and
+   acknowledge the public-certificate-ledger notice. The deployment uses this for its
+   private HTTPS address.
+3. On **Keys**, select **Generate auth key**. Use **Pre-approved/Pre-authorized** when
+   that option is available, leave **Ephemeral** off, and leave **Reusable** off. This
+   creates a one-time enrollment key for the persistent NAS node. If pre-approval is not
+   available, generate the key and approve the new NAS device manually on the Machines
+   page after the first start.
+
+Keep Funnel disabled. Do not configure subnet routes or an exit node for this app.
 
 Choose a unique hostname, for example `vibe-research`. Determine your tailnet DNS suffix
 from the Tailscale DNS or Machines page, then complete these values:
@@ -67,16 +82,57 @@ The exact public origin must match the final Tailscale HTTPS address and must no
 a slash. Avoid a hostname already used by another tailnet machine, because Tailscale may
 add a numeric suffix.
 
-## 3. Generate secrets and the browser login
+For example, if the tailnet DNS suffix is `tail752dd9.ts.net` and the NAS hostname is
+`vibe-research`, use:
 
-Generate the internal Vibe-to-TradeAgent bearer token:
+```dotenv
+VR_PUBLIC_ORIGIN=https://vibe-research.tail752dd9.ts.net
+```
+
+Do not use the tailnet suffix by itself (`https://tail752dd9.ts.net`). The machine
+hostname is part of the HTTPS address.
+
+In the Mac Tailscale window shown in the setup screenshots:
+
+- **Use Tailscale DNS settings** checked: correct; it lets the Mac resolve MagicDNS names.
+- **Use Tailscale subnets**: not required for this deployment; it can remain checked, but
+  this app does not advertise or consume subnet routes.
+- **Run as exit node** unchecked: correct; do not enable it.
+- **Allow incoming connections**: unrelated to the NAS container; no change is needed.
+
+## 3. Generate credentials and the browser login
+
+Generate the internal Vibe-to-TradeAgent bearer token and put it directly in `.env.nas`:
 
 ```bash
-mkdir -p deploy/secrets
-chmod 700 deploy/secrets
-umask 077
-openssl rand -hex 32 > deploy/secrets/trade-research-token
+TRADE_RESEARCH_API_TOKEN=$(openssl rand -hex 32)
+printf '%s\n' "$TRADE_RESEARCH_API_TOKEN"
 ```
+
+Copy the printed value into the private `.env.nas` file:
+
+```text
+TRADE_RESEARCH_API_TOKEN=<generated value>
+```
+
+This is not the Vibe login password and it is not the Tailscale auth key. Both the backend
+and TradeAgent receive it as an environment variable inside the private Compose network.
+Do not commit `.env.nas` or paste it into screenshots.
+
+Optional server-side DeepSeek configuration can be placed in the same file:
+
+```dotenv
+VR_LLM_PROVIDER=deepseek
+VR_LLM_BASE_URL=https://api.deepseek.com
+VR_LLM_API_KEY=<your DeepSeek API key>
+VR_LLM_MODEL=deepseek-v4-flash
+```
+
+The model value is sent to DeepSeek exactly as written; use the model identifier currently
+enabled for your account. The key stays in the backend container and is not sent to the
+browser. If a browser already has an API configuration saved, open **AI Setup → Clear**
+once to use the server-side values. If these variables are omitted, configure AI from the
+browser's **AI Setup** page.
 
 Build the backend for AMD64 and use its offline password utility:
 
@@ -116,7 +172,7 @@ The script:
 - pulls the AMD64 Tailscale image;
 - validates the image-only Compose project;
 - exports all four distinct images to one tar archive;
-- packages the Compose file, `.env`, Tailscale Serve config, and Docker secret.
+- packages the Compose file, `.env`, and Tailscale Serve config.
 
 The result is created under:
 
@@ -128,13 +184,12 @@ deploy/output/vibe-research-nas-YYYYMMDD-HHMMSS/
 ├── .env
 ├── DEPLOYMENT.md
 └── deploy/
-    ├── secrets/trade-research-token
     └── tailscale/serve.json
 ```
 
 The tar can be several gigabytes. The bundle also contains your login hash, Tailscale
-enrollment key, and internal token. Transfer it only over a trusted local connection and
-never commit or share it.
+enrollment key, internal token, and optionally your DeepSeek key. Transfer it only over a
+trusted local connection and never commit or share it.
 
 ## 5. Transfer and import with UGOS
 
@@ -165,7 +220,8 @@ In the UGOS Docker app:
 3. Name it `vibe-research-nas`.
 4. Select the transferred directory and its `compose.yaml`, or paste that file into the
    project editor while keeping the project directory unchanged.
-5. Confirm that UGOS loads the `.env` file from the same directory.
+5. Confirm that UGOS loads the file named exactly `.env` from the same directory. Do not
+   leave it named `.env.nas`; UGOS's Project editor normally does not auto-load that name.
 6. Deploy the project.
 
 If UGOS asks for environment values instead of loading `.env`, provide the variables from
@@ -181,6 +237,17 @@ Expected containers:
 
 The project also creates three named volumes for Tailscale identity, Vibe data, and
 TradeAgent data. Never delete those volumes during a routine upgrade.
+
+Before deploying, verify the transferred project contains the `.env` file with non-empty
+`TRADE_RESEARCH_API_TOKEN`:
+
+```text
+/volume1/docker/vibe-research/.env
+```
+
+Do not create or upload `deploy/secrets/trade-research-token`; the NAS Compose file no
+longer uses a Docker secret mount. The TradeAgent CLI still prints only safe,
+operator-facing diagnostics and never prints token values.
 
 ## 7. Verify using the Docker UI and phone
 
@@ -246,6 +313,44 @@ generated bundle's `compose.yaml`, which contains no `build:` sections.
 
 Confirm the imported tag exactly matches the relevant image variable in `.env`. Image
 names and tags are exact and case-sensitive.
+
+### `research-api` repeats `Error: invalid command or arguments`
+
+That message means the NAS is still running an older TradeAgent image, or the command is
+being rejected before the service starts. `serve --help` only checks that the CLI exists;
+it does not validate the token or provider configuration. Rebuild and re-import the
+bundle after any TradeAgent change:
+
+```bash
+cd /Users/chenkangan/Documents/VibeResearch
+./scripts/build-nas-bundle.sh
+```
+
+Then import the newly generated `images-amd64.tar`, confirm that the Project's
+`TRADE_RESEARCH_IMAGE` tag in `.env` matches the imported tag, and force-recreate the
+Project. Open the **research-api** container's own log (not only the Project activity
+log). A current image reports the actionable cause, for example:
+
+```text
+Error: TRADE_RESEARCH_API_TOKEN must be set
+Error: host must be a private IP literal
+Error: research configuration is invalid
+```
+
+The intended NAS command is either form below; both are valid Click syntax, but keep it
+as a list in YAML so UGOS does not invoke a shell:
+
+```yaml
+command:
+  - trade-research
+  - serve
+  - --host=0.0.0.0
+  - --port=8000
+```
+
+If the current image still prints only the generic message after a rebuild, the imported
+tar or image tag is not the one used by the Project. Do not troubleshoot Tailscale until
+`research-api` stays healthy; the other services wait for that dependency.
 
 ### Login POST requests return 403
 

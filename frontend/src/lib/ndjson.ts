@@ -6,6 +6,23 @@ import { ApiError, authHeaders, notifyAuthInvalidated } from "@/lib/api";
 
 export type NdjsonEvent = Record<string, any>;
 
+function errorDetailMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item) => errorDetailMessage(item, "")).filter(Boolean);
+    return messages.join("; ") || fallback;
+  }
+  if (detail && typeof detail === "object") {
+    const item = detail as Record<string, unknown>;
+    const message = typeof item.message === "string" ? item.message : typeof item.msg === "string" ? item.msg : "";
+    const location = Array.isArray(item.loc) ? item.loc.slice(1).join(".") : "";
+    if (message) return location ? `${location}: ${message}` : message;
+    if (item.detail !== undefined) return errorDetailMessage(item.detail, fallback);
+    try { return JSON.stringify(item); } catch { return fallback; }
+  }
+  return fallback;
+}
+
 /**
  * POST 一个 JSON body，按行消费 NDJSON 事件流。
  * - 配置类错误（400/401）在流开始前抛 ApiError，调用方可直接提示用户去配置。
@@ -37,7 +54,7 @@ export async function streamNdjson(
       notifyAuthInvalidated();
       throw new ApiError("登录已过期或访问密钥无效，请重新登录", 401);
     }
-    throw new ApiError(detail?.detail || `HTTP ${resp.status}`, resp.status);
+    throw new ApiError(errorDetailMessage(detail?.detail, `HTTP ${resp.status}`), resp.status);
   }
   if (!resp.body) throw new ApiError("后端无响应流", 502);
 

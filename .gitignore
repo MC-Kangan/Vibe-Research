@@ -17,6 +17,10 @@ deploy-data/
 .env.*
 !.env.example
 !.env.deploy.example
+!.env.nas.example
+deploy/secrets/
+deploy/output/
+.trade-research/
 *.pem
 *.key
 *.secret

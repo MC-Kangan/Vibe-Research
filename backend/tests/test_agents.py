@@ -16,6 +16,7 @@ import debate
 import reflection
 import research
 import tools
+from api import ai_routes
 
 client = TestClient(app_module.app)
 
@@ -377,6 +378,17 @@ def test_reflect_prompt_forbids_own_judgement():
 ])
 def test_debate_route_validation(body, code):
     assert client.post("/api/debate", json=body).status_code == code
+
+
+def test_debate_routes_accept_every_shared_instrument_skill():
+    skills = ["fundamental", "filings", "worth-buy-stocks", "risk-analysis"]
+    assert ai_routes._validated_research_skills(skills, "en") == skills
+
+
+def test_debate_routes_reject_skills_outside_shared_instrument_scope():
+    with pytest.raises(ai_routes.HTTPException) as raised:
+        ai_routes._validated_research_skills(["backtesting"], "en")
+    assert raised.value.status_code == 422
 
 
 def test_reflect_route_rejects_empty_source():

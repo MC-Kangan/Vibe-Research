@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { toast } from "sonner";
 import { apiCredentialsAllowedOnOrigin, loadLlm, saveLlm, clearLlm } from "@/lib/llm";
 import { api, loadAccessKey, saveAccessKey, type DataSourceStatus } from "@/lib/api";
-import { subscriptionModels, apiModels, PROVIDER_BASE, isCliProvider, aiModels, type ProviderId } from "@/lib/ai-models";
+import { subscriptionModels, apiModels, PROVIDER_BASE, isCliProvider, isServerProvider, aiModels, type ProviderId } from "@/lib/ai-models";
 import { storageGet, storageSet } from "@/lib/storage";
 import { useLocale } from "@/lib/i18n";
 
@@ -13,16 +13,17 @@ export function Settings() {
   const { locale, tr } = useLocale();
   const existing = loadLlm();
   const existingIsCli = existing ? isCliProvider(existing.provider) : false;
+  const usingServerLlm = existing ? isServerProvider(existing.provider) : false;
 
   const [mode, setMode] = useState<"api" | "subscription">(existing && existingIsCli ? "subscription" : "api");
   // 订阅：选中的 CLI model id
   const [cliId, setCliId] = useState(existing && existingIsCli ? existing.model : "");
   // API：选中的模型 id + 可编辑的 baseURL / model / key
   const firstApi = apiModels[0];
-  const [apiId, setApiId] = useState(existing && !existingIsCli ? existing.model : firstApi.id);
-  const [baseURL, setBaseURL] = useState(existing && !existingIsCli ? existing.baseURL : (PROVIDER_BASE[firstApi.provider] || ""));
-  const [modelName, setModelName] = useState(existing && !existingIsCli ? existing.model : firstApi.id);
-  const [apiKey, setApiKey] = useState(existing && !existingIsCli ? existing.apiKey : "");
+  const [apiId, setApiId] = useState(existing && !existingIsCli && !usingServerLlm ? existing.model : firstApi.id);
+  const [baseURL, setBaseURL] = useState(existing && !existingIsCli && !usingServerLlm ? existing.baseURL : (PROVIDER_BASE[firstApi.provider] || ""));
+  const [modelName, setModelName] = useState(existing && !existingIsCli && !usingServerLlm ? existing.model : firstApi.id);
+  const [apiKey, setApiKey] = useState(existing && !existingIsCli && !usingServerLlm ? existing.apiKey : "");
   // 后端访问密钥（对应部署时的 VR_API_KEY）；本机自用不设鉴权时留空
   const [accessKey, setAccessKey] = useState(loadAccessKey());
   const [dataSources, setDataSources] = useState<DataSourceStatus | null>(null);
@@ -81,10 +82,14 @@ export function Settings() {
     <div>
       <PageHeader title={tr("AI Setup", "接入 AI")} subtitle={tr("Configure once to use your own model for Ask AI and reviews throughout the app", "配置一次，全站的「问 AI」「复盘」都能用你自己的模型")} />
 
-      <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
+      {usingServerLlm && <div className="mb-4 rounded-lg border border-primary/25 bg-primary/5 p-3 text-xs text-muted-foreground">
+        {tr("Using the server-side AI configuration from Docker environment variables. The API key is kept in the backend container.", "当前使用 Docker 环境变量中的服务端 AI 配置，API key 保存在后端容器中。")}
+      </div>}
+
+      {!usingServerLlm && <div className="mb-4 flex items-start gap-2 rounded-lg border border-success/25 bg-success/5 p-3 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
         <span>{tr("Your API key ", "API key ")}<b className="text-foreground">{tr("exists only in this browser", "只存在你本地浏览器")}</b>{tr(" and is sent to your backend only when you ask a question. API mode is blocked on insecure LAN origins; use HTTPS or local CLI mode. It is never committed. Your model produces the analysis.", "，仅在你提问时发给你自己的后端去调模型。非安全的局域网地址会禁用 API 模式，请使用 HTTPS 或本机 CLI。密钥不会进入仓库，所有分析由你的模型给出。")}</span>
-      </div>
+      </div>}
 
       {/* 两种接入方式 */}
       <div className="mb-4 grid gap-3 sm:grid-cols-2">

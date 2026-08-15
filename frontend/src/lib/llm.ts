@@ -1,9 +1,10 @@
-// 用户 LLM 配置（只存本地 localStorage，不上传、不进仓库）+ 系统 AI 对话调用。
+// User LLM configuration (local storage only) plus the optional server-side
+// configuration used by the NAS deployment.
 
 import { storageSet, storageRemove } from "@/lib/storage";
 
 import { ApiError, authHeaders, notifyAuthInvalidated } from "./api";
-import { isCliProvider, type ProviderId } from "./ai-models";
+import { isCliProvider, isServerProvider, type ProviderId } from "./ai-models";
 import type { AiRuntimeMetadata, AiWorkflowId } from "./ai-workflows";
 import { getLocale, translate } from "./i18n";
 
@@ -27,17 +28,23 @@ export interface ChatResult {
 }
 
 const KEY = "vr-llm";
+const SERVER_LLM: LlmConfig = {
+  provider: "server",
+  baseURL: "",
+  apiKey: "",
+  model: "server-default",
+};
 
 export function loadLlm(): LlmConfig | null {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
+    if (!raw) return SERVER_LLM;
     const c = JSON.parse(raw) as LlmConfig;
     // 订阅(CLI)：有 model 即可，免 key；API：需 baseURL + key + model。
     const ok = c.model && (isCliProvider(c.provider) || (c.baseURL && c.apiKey));
-    return ok ? c : null;
+    return ok ? c : SERVER_LLM;
   } catch {
-    return null;
+    return SERVER_LLM;
   }
 }
 
@@ -71,7 +78,7 @@ export async function chatStream(workflow: AiWorkflowId, messages: ChatMsg[], co
   const llm = loadLlm();
   const locale = getLocale();
   if (!llm) throw new ApiError(translate(locale, "AI is not configured. Open AI Setup first.", "尚未接入 AI，请先在「接入 AI」里配置"), 400);
-  if (!isCliProvider(llm.provider) && !apiCredentialsAllowedOnOrigin()) {
+  if (!isCliProvider(llm.provider) && !isServerProvider(llm.provider) && !apiCredentialsAllowedOnOrigin()) {
     throw new ApiError(translate(
       locale,
       "API mode requires HTTPS on a LAN address because your model key would otherwise cross the network unencrypted. Use HTTPS or local CLI mode.",

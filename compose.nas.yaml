@@ -63,8 +63,12 @@ services:
       VR_AUTH_COOKIE_SECURE: "true"
       VR_TRADE_RESEARCH_ENABLED: "true"
       VR_TRADE_RESEARCH_BASE_URL: http://research-api:8000
-      VR_TRADE_RESEARCH_API_TOKEN_FILE: /run/secrets/trade-research-token
+      VR_TRADE_RESEARCH_API_TOKEN: ${TRADE_RESEARCH_API_TOKEN:?Set the TradeAgent token in .env.nas}
       VR_TRADE_RESEARCH_TIMEOUT_SECONDS: ${VR_TRADE_RESEARCH_TIMEOUT_SECONDS:-30}
+      VR_LLM_PROVIDER: ${VR_LLM_PROVIDER:-deepseek}
+      VR_LLM_BASE_URL: ${VR_LLM_BASE_URL:-https://api.deepseek.com}
+      VR_LLM_API_KEY: ${VR_LLM_API_KEY:-}
+      VR_LLM_MODEL: ${VR_LLM_MODEL:-}
       VR_FINNHUB_API_KEY: ${VR_FINNHUB_API_KEY:-}
       VR_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:?Set an SEC user agent containing your real contact email}
       VR_COINGECKO_API_KEY: ${VR_COINGECKO_API_KEY:-}
@@ -85,8 +89,6 @@ services:
       VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS: ${VR_IBKR_FLEX_INTER_QUERY_DELAY_SECONDS:-5}
       VR_IBKR_POSITION_STORE: /data/ibkr-positions.json
       VR_IBKR_ANALYTICS_STORE: /data/ibkr-analytics.sqlite3
-    secrets:
-      - trade-research-token
     volumes:
       - vibe-data:/data
     expose:
@@ -109,7 +111,7 @@ services:
     init: true
     restart: unless-stopped
     environment: &trade-research-environment
-      TRADE_RESEARCH_API_TOKEN_FILE: /run/secrets/trade-research-token
+      TRADE_RESEARCH_API_TOKEN: ${TRADE_RESEARCH_API_TOKEN:?Set the TradeAgent token in .env.nas}
       TRADE_RESEARCH_CONTAINER_INTERNAL_BIND: compose-internal-v1
       TRADE_RESEARCH_DATA_DIR: /var/lib/trade-research
       TRADE_RESEARCH_DATA_ROOT: /var/lib/trade-research
@@ -117,8 +119,6 @@ services:
       TRADE_RESEARCH_FUNDAMENTAL_PROVIDER: ${TRADE_RESEARCH_FUNDAMENTAL_PROVIDER:-sec_company_facts}
       TRADE_RESEARCH_SEC_USER_AGENT: ${VR_SEC_USER_AGENT:?Set an SEC user agent containing your real contact email}
       TRADE_RESEARCH_CCXT_EXCHANGE: ${TRADE_RESEARCH_CCXT_EXCHANGE:-}
-    secrets:
-      - trade-research-token
     tmpfs:
       - /tmp
     volumes:
@@ -146,7 +146,7 @@ services:
         condition: service_healthy
     environment:
       <<: *trade-research-environment
-      TRADE_RESEARCH_API_TOKEN_FILE: ""
+      TRADE_RESEARCH_API_TOKEN: ""
     tmpfs:
       - /tmp
     volumes:
@@ -158,7 +158,3 @@ volumes:
   tailscale-state:
   vibe-data:
   trade-research-data:
-
-secrets:
-  trade-research-token:
-    file: ${TRADE_RESEARCH_TOKEN_FILE:-./deploy/secrets/trade-research-token}

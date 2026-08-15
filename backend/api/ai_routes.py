@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -13,6 +14,7 @@ import cli_runtime
 import debate as debate_layer
 import market_data
 import reflection as reflection_layer
+import research as research_layer
 import research_context
 import research_team
 from api.validation import validate_stock_symbol
@@ -25,7 +27,7 @@ class LLMConfig(BaseModel):
     provider: str = ""
     baseURL: str = ""
     apiKey: str = ""
-    model: str
+    model: str = ""
 
 
 class ChatMessage(BaseModel):
@@ -46,15 +48,6 @@ class ResearchContextIn(BaseModel):
     content: str = Field(max_length=research_context.MAX_ITEM_CHARS)
 
 
-SkillName = Literal[
-    "worth-buy-stocks",
-    "markov-method",
-    "technical-basic",
-    "risk-analysis",
-    "volatility-regime",
-]
-
-
 class DebateReq(BaseModel):
     code: str
     rounds: int = 1
@@ -62,7 +55,7 @@ class DebateReq(BaseModel):
     llm: LLMConfig
     locale: Literal["en", "zh-CN"] = "en"
     additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
-    research_skills: list[SkillName] = Field(default_factory=list, max_length=5)
+    research_skills: list[str] = Field(default_factory=list, max_length=5)
     research_skill_parameters: dict[str, dict] = Field(default_factory=dict)
 
 
@@ -84,7 +77,7 @@ class ResearchTeamReq(BaseModel):
     additional_contexts: list[ResearchContextIn] = Field(default_factory=list, max_length=research_context.MAX_ITEMS)
     position_instrument_key: str | None = Field(default=None, max_length=64)
     include_position_preferences: bool = False
-    research_skills: list[SkillName] = Field(default_factory=list, max_length=5)
+    research_skills: list[str] = Field(default_factory=list, max_length=5)
     research_skill_parameters: dict[str, dict] = Field(default_factory=dict)
 
 
@@ -99,7 +92,43 @@ def locale_text(locale: str, english: str, chinese: str) -> str:
     return chinese if locale == "zh-CN" else english
 
 
+def _validated_research_skills(skills: list[str], locale: str) -> list[str]:
+    selected = list(dict.fromkeys(skill.strip() for skill in skills if skill.strip()))
+    invalid = [skill for skill in selected if skill not in research_layer.INSTRUMENT_SKILLS]
+    if invalid:
+        raise HTTPException(
+            422,
+            locale_text(
+                locale,
+                f"Unsupported research skills: {', '.join(invalid)}",
+                f"不支持的研究技能：{', '.join(invalid)}",
+            ),
+        )
+    return selected
+
+
+def _server_llm_config(locale: Literal["en", "zh-CN"]) -> dict:
+    provider = os.environ.get("VR_LLM_PROVIDER", "").strip()
+    base_url = os.environ.get("VR_LLM_BASE_URL", "").strip()
+    api_key = os.environ.get("VR_LLM_API_KEY", "").strip()
+    model = os.environ.get("VR_LLM_MODEL", "").strip()
+    if not provider or not base_url or not api_key or not model:
+        raise HTTPException(
+            400,
+            locale_text(
+                locale,
+                "Server-side AI is not configured. Set VR_LLM_PROVIDER, VR_LLM_BASE_URL, VR_LLM_API_KEY and VR_LLM_MODEL.",
+                "服务端 AI 尚未配置，请设置 VR_LLM_PROVIDER、VR_LLM_BASE_URL、VR_LLM_API_KEY 和 VR_LLM_MODEL。",
+            ),
+        )
+    return {"provider": provider, "baseURL": base_url, "apiKey": api_key, "model": model}
+
+
 def check_llm(llm: LLMConfig, locale: Literal["en", "zh-CN"] = "en") -> dict:
+    if llm.provider == "server":
+        cfg = _server_llm_config(locale)
+        cfg["_locale"] = locale
+        return cfg
     if not llm.model:
         raise HTTPException(400, locale_text(locale, "Choose a model in AI Setup first.", "缺少模型配置，请先在「接入 AI」里选择"))
     if llm.provider.startswith("cli-"):
@@ -173,9 +202,12 @@ def debate(request: DebateReq):
         contexts = research_context.normalize([item.model_dump() for item in request.additional_contexts])
     except research_context.ResearchContextError as exc:
         raise HTTPException(400, exc.localized(request.locale)) from exc
+    selected_research_skills = _validated_research_skills(
+        request.research_skills, request.locale
+    )
     return ndjson(lambda: debate_layer.run_debate_stream(
         cfg, code, 2 if request.rounds >= 2 else 1, request.asset_type, contexts,
-        list(dict.fromkeys(request.research_skills)), request.research_skill_parameters,
+        selected_research_skills, request.research_skill_parameters,
     ))
 
 
@@ -211,9 +243,12 @@ def run_research_team(request: ResearchTeamReq):
         contexts = research_context.normalize([item.model_dump() for item in request.additional_contexts])
     except research_context.ResearchContextError as exc:
         raise HTTPException(400, exc.localized(request.locale)) from exc
+    selected_research_skills = _validated_research_skills(
+        request.research_skills, request.locale
+    )
     response = ndjson(lambda: research_team.run_stream(
         check_llm(request.llm, request.locale), code, request.asset_type, contexts, position_text,
-        list(dict.fromkeys(request.research_skills)), request.research_skill_parameters,
+        selected_research_skills, request.research_skill_parameters,
     ))
     if position_context:
         response.headers["X-Vibe-Position-Context"] = "selected-only"

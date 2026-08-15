@@ -5,7 +5,6 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 env_file=${1:-"$project_dir/.env.nas"}
 timestamp=$(date +%Y%m%d-%H%M%S)
 bundle_dir=${2:-"$project_dir/deploy/output/vibe-research-nas-$timestamp"}
-secret_file="$project_dir/deploy/secrets/trade-research-token"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker Desktop is required on this Mac." >&2
@@ -18,8 +17,9 @@ if [ ! -f "$env_file" ]; then
   exit 1
 fi
 
-if [ ! -s "$secret_file" ]; then
-  echo "Missing or empty TradeAgent secret: $secret_file" >&2
+trade_research_token=$(sed -n 's/^TRADE_RESEARCH_API_TOKEN=//p' "$env_file" | tail -n 1)
+if [ -z "$trade_research_token" ]; then
+  echo "Missing or empty TRADE_RESEARCH_API_TOKEN in $env_file" >&2
   exit 1
 fi
 
@@ -28,7 +28,7 @@ if grep -q 'REPLACE_WITH\|TEMPORARY_PLACEHOLDER\|your-tailnet\|your-email' "$env
   exit 1
 fi
 
-mkdir -p "$bundle_dir/deploy/tailscale" "$bundle_dir/deploy/secrets"
+mkdir -p "$bundle_dir/deploy/tailscale"
 
 cd "$project_dir"
 
@@ -75,9 +75,8 @@ docker image save --output "$bundle_dir/images-amd64.tar" "$@"
 
 cp "$env_file" "$bundle_dir/.env"
 cp deploy/tailscale/serve.json "$bundle_dir/deploy/tailscale/serve.json"
-cp "$secret_file" "$bundle_dir/deploy/secrets/trade-research-token"
 cp docs/nas-full-stack-deployment.md "$bundle_dir/DEPLOYMENT.md"
-chmod 600 "$bundle_dir/.env" "$bundle_dir/deploy/secrets/trade-research-token"
+chmod 600 "$bundle_dir/.env"
 
 echo "NAS bundle created at:"
 echo "$bundle_dir"
